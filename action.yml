@@ -30,10 +30,10 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@v6
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       if: inputs.version == 'source'
       with:
-        go-version-file: ${{ github.action_path }}/go.mod
+        go-version: stable
         cache: false
     - name: Build safe-install from source
       if: inputs.version == 'source'
@@ -90,7 +90,7 @@ runs:
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
     - name: Upload to code scanning
       if: inputs.sarif == 'true' && always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
       with:
         sarif_file: ${{ runner.temp }}/safe-install.sarif
         category: safe-install
