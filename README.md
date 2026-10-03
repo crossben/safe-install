@@ -48,6 +48,22 @@ Your project's own lifecycle scripts are never run for you.
 Running approved scripts uses `npm run` inside each package's directory, so npm must be
 on `PATH` (it ships with Node).
 
+## Runtime monitor (Linux)
+
+```sh
+safe-install install --monitor        # report what approved scripts do
+safe-install install --monitor=kill   # stop a script after its first high-risk action
+```
+
+Approved scripts run under `strace` (install it with your package manager; no root
+needed). safe-install reports network connections, network tools (`curl`, `wget`, `nc`…),
+reads of credentials (`~/.ssh`, `~/.npmrc`, cloud and browser data) and writes to
+persistence locations (shell startup files, `~/.ssh`, autostart, systemd, git hooks,
+system directories) or anywhere outside the project and caches. Only the scripts are
+traced, not the package manager. strace sees a syscall once it happened, so `kill` stops
+the script *after* the first dangerous action, not before it. On macOS and Windows,
+`--monitor` is not available; everything else works the same.
+
 ## Approvals and policy
 
 Answering **y** at the prompt (or running `safe-install approve <pkg>`) records the approval

@@ -14,13 +14,14 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/scripts"
 )
 
 func newInstallCmd(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "install [-- <package manager args>]",
 		Short: "Install dependencies, then run only the install scripts you approve",
 		Example: "  safe-install install\n" +
@@ -30,10 +31,12 @@ func newInstallCmd(g *globalFlags) *cobra.Command {
 			return runInstall(cmd, g, args, false)
 		},
 	}
+	addMonitorFlag(cmd, g)
+	return cmd
 }
 
 func newAddCmd(g *globalFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "add <package>... [-- <package manager args>]",
 		Short: "Add packages with scripts disabled, then review their install scripts",
 		Example: "  safe-install add left-pad\n" +
@@ -43,6 +46,8 @@ func newAddCmd(g *globalFlags) *cobra.Command {
 			return runInstall(cmd, g, args, true)
 		},
 	}
+	addMonitorFlag(cmd, g)
+	return cmd
 }
 
 // installArgs accepts arguments only after "--"; they go to the package manager.
@@ -68,6 +73,8 @@ type session struct {
 	adapter pm.Adapter
 	pol     *policy.Policy
 	w       *lineWriter
+	monitor monitor.Mode
+	flagged bool // the monitor saw high-risk behavior
 }
 
 func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
@@ -87,7 +94,12 @@ func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &session{cmd, g, dir, det, adapter, pol, &lineWriter{w: cmd.ErrOrStderr()}}, nil
+	mode, err := monitorMode(g)
+	if err != nil {
+		return nil, err
+	}
+	return &session{cmd: cmd, g: g, dir: dir, det: det, adapter: adapter, pol: pol,
+		w: &lineWriter{w: cmd.ErrOrStderr()}, monitor: mode}, nil
 }
 
 func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) error {
@@ -129,6 +141,9 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 	projectScriptsNote(w, s.dir, s.det.Kind)
 	if w.err != nil {
 		return w.err
+	}
+	if g.ci && s.flagged {
+		return &exitError{ExitPolicyFailure, errors.New("the runtime monitor saw high-risk behavior")}
 	}
 	if g.ci {
 		ran := map[*scripts.Candidate]bool{}
@@ -176,7 +191,7 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 		}
 	}
 	for _, c := range cands {
-		c.Findings = append(scripts.Scan(c), registryFindings[c.Package.ID]...)
+		c.Findings = append(scripts.Scan(c), scriptRelevant(registryFindings[c.Package.ID])...)
 		state, f := scripts.ApprovalState(c, s.pol.AllowScripts)
 		c.State = state
 		if f != nil {
@@ -184,6 +199,20 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 		}
 		_, c.Level = analyze.Score(c.Findings)
 	}
+}
+
+// scriptRelevant drops ordinary vulnerability advisories: they say nothing
+// about whether an install script is safe to run (`check` reports them).
+// Known-malware entries stay.
+func scriptRelevant(fs []analyze.Finding) []analyze.Finding {
+	var out []analyze.Finding
+	for _, f := range fs {
+		if f.Rule == "SI-VUL-001" && f.Severity != analyze.Block {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // approve decides which candidates run: recorded approvals always; then
@@ -245,11 +274,57 @@ func (s *session) run(cands []*scripts.Candidate) error {
 	for _, c := range cands {
 		targets = append(targets, pm.Target{Name: c.Package.Name, Version: c.Package.Version, Dir: c.Dir, Stages: c.Stages()})
 	}
-	s.w.printf("\nsafe-install: running approved scripts for %d package(s)\n", len(targets))
+	opts := pm.RunOptions{Stdout: s.cmd.OutOrStdout(), Stderr: s.cmd.ErrOrStderr()}
+	watching := ""
+	var ms *monitor.Session
+	if s.monitor != "" {
+		var err error
+		if ms, err = monitor.NewSession(s.dir, s.monitor); err != nil {
+			return err
+		}
+		defer func() { _ = ms.Close() }()
+		if opts.ScriptShell, err = ms.ScriptShell(); err != nil {
+			return err
+		}
+		opts.Env = ms.Env()
+		watching = fmt.Sprintf(" under the runtime monitor (%s)", s.monitor)
+	}
+	s.w.printf("\nsafe-install: running approved scripts for %d package(s)%s\n", len(targets), watching)
 	if s.w.err != nil {
 		return s.w.err
 	}
-	return s.adapter.RunScripts(s.cmd.Context(), s.dir, targets, pm.RunOptions{Stdout: s.cmd.OutOrStdout(), Stderr: s.cmd.ErrOrStderr()})
+	runErr := s.adapter.RunScripts(s.cmd.Context(), s.dir, targets, opts)
+	if ms != nil {
+		recs, err := ms.Records()
+		if err != nil {
+			return errors.Join(runErr, err)
+		}
+		s.monitorReport(recs)
+	}
+	return errors.Join(runErr, s.w.err)
+}
+
+// monitorReport prints what the runtime monitor saw, per package and stage.
+func (s *session) monitorReport(recs []monitor.Record) {
+	w := s.w
+	if len(recs) == 0 {
+		w.printf("\nRuntime monitor: nothing suspicious\n")
+		return
+	}
+	w.printf("\nRuntime monitor:\n")
+	last := ""
+	for _, r := range recs {
+		if key := r.Package + " " + r.Stage; key != last {
+			w.printf("  %s\n", key)
+			last = key
+		}
+		note := ""
+		if r.Killed {
+			note = "  [killed]"
+		}
+		w.printf("    %-6s %s  %s%s\n", strings.ToUpper(r.Severity), r.Rule, r.Message, note)
+		s.flagged = s.flagged || r.High()
+	}
 }
 
 func describe(w *lineWriter, c *scripts.Candidate) {

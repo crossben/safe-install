@@ -84,6 +84,7 @@ func newApproveCmd(g *globalFlags) *cobra.Command {
 	f.BoolVar(&global, "global", false, "record in the user config instead of the project's "+policy.FileName)
 	f.BoolVar(&force, "force", false, "approve even high or blocking risk")
 	f.BoolVar(&noRun, "no-run", false, "record the approval without running the scripts now")
+	addMonitorFlag(cmd, g)
 	return cmd
 }
 

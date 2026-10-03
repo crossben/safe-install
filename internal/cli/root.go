@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
+	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/policy"
 )
 
@@ -28,6 +30,7 @@ type globalFlags struct {
 	offline  bool
 	registry string
 	minAge   string
+	monitor  string // "", "report" or "kill" (install, add, approve)
 }
 
 // exitError carries a specific exit code up to Execute.
@@ -66,6 +69,40 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newInstallCmd(&g), newAddCmd(&g), newCheckCmd(&g), newScriptsCmd(&g),
 		newApproveCmd(&g), newExplainCmd(), newShellInitCmd(), newVersionCmd())
 	return root
+}
+
+// addMonitorFlag adds --monitor to a command that runs install scripts.
+func addMonitorFlag(cmd *cobra.Command, g *globalFlags) {
+	cmd.Flags().StringVar(&g.monitor, "monitor", "", "watch approved scripts as they run (Linux): report, or kill on the first high-risk action")
+	cmd.Flags().Lookup("monitor").NoOptDefVal = string(monitor.ModeReport)
+}
+
+// monitorMode validates --monitor; the error explains the Linux-only part.
+func monitorMode(g *globalFlags) (monitor.Mode, error) {
+	switch mode := monitor.Mode(g.monitor); mode {
+	case "":
+		return "", nil
+	case monitor.ModeReport, monitor.ModeKill:
+		if err := monitor.Supported(); err != nil {
+			if errors.Is(err, monitor.ErrUnsupportedOS) {
+				return "", fmt.Errorf("%w. Want this too? Too bad, you're on %s. Everything else in safe-install works the same here", err, osName())
+			}
+			return "", err
+		}
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown --monitor %q (report, kill)", g.monitor)
+	}
+}
+
+func osName() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macOS"
+	case "windows":
+		return "Windows"
+	}
+	return runtime.GOOS
 }
 
 // loadPolicy reads the policy for the current directory and applies it

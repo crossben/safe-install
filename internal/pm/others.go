@@ -80,7 +80,7 @@ func (yarnBerryAdapter) RunScripts(ctx context.Context, dir string, targets []Ta
 		if loader := filepath.Join(dir, ".pnp.loader.mjs"); fileExists(loader) {
 			nodeOpts += " --experimental-loader=" + (&url.URL{Scheme: "file", Path: filepath.ToSlash(loader)}).String()
 		}
-		opts.env = append(opts.env, "NODE_OPTIONS="+nodeOpts)
+		opts.Env = append(opts.Env, "NODE_OPTIONS="+nodeOpts)
 	}
 	return runInPackageDirs(ctx, targets, opts)
 }

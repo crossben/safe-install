@@ -41,7 +41,8 @@ type Target struct {
 // RunOptions configures RunScripts.
 type RunOptions struct {
 	Stdout, Stderr io.Writer
-	env            []string // extra environment, set by adapters
+	ScriptShell    string   // run scripts with this shell instead of sh (the runtime monitor)
+	Env            []string // extra environment for the scripts
 }
 
 // For returns the adapter for k in project dir.
@@ -107,11 +108,15 @@ func runInPackageDirs(ctx context.Context, targets []Target, opts RunOptions) er
 			return fmt.Errorf("%s@%s: %w", t.Name, t.Version, ErrNotUnpacked)
 		}
 		for _, stage := range t.Stages {
-			cmd, err := command(ctx, t.Dir, "npm", "run", stage, "--ignore-scripts")
+			args := []string{"run", stage, "--ignore-scripts"}
+			if opts.ScriptShell != "" {
+				args = append(args, "--script-shell="+opts.ScriptShell)
+			}
+			cmd, err := command(ctx, t.Dir, "npm", args...)
 			if err != nil {
 				return fmt.Errorf("running approved scripts needs npm: %w", err)
 			}
-			cmd.Env = append(cmd.Env, opts.env...)
+			cmd.Env = append(cmd.Env, opts.Env...)
 			if err := run(cmd, opts.Stdout, opts.Stderr, fmt.Sprintf("%s@%s %s", t.Name, t.Version, stage)); err != nil {
 				return err
 			}
