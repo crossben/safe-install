@@ -1,0 +1,35 @@
+version: 2
+
+project_name: safe-install
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/safe-install
+    binary: safe-install
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/crossben/safe-install/internal/cli.version={{.Version}}
+      - -X github.com/crossben/safe-install/internal/cli.commit={{.ShortCommit}}
+      - -X github.com/crossben/safe-install/internal/cli.date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+# Homebrew tap, Scoop bucket, deb/rpm, cosign signing and SLSA provenance
+# are added in M8 (plan §10).

@@ -1,0 +1,10 @@
+/dist/
+/bin/
+/safe-install
+/safe-install.exe
+*.test
+*.out
+coverage.*
+.DS_Store
+.idea/
+.vscode/
