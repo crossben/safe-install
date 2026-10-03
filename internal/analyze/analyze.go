@@ -110,9 +110,10 @@ func (r *Report) Worst() Level {
 // Config tunes the rules.
 type Config struct {
 	Now           time.Time
-	MinReleaseAge time.Duration // 0 disables SI-REC-001
-	RegistryURL   string        // expected source of tarballs (SI-INT-002)
-	Concurrency   int           // parallel registry fetches; default 16
+	MinReleaseAge time.Duration          // 0 disables SI-REC-001
+	Exclude       func(name string) bool // packages exempt from SI-REC-001
+	RegistryURL   string                 // expected source of tarballs (SI-INT-002)
+	Concurrency   int                    // parallel registry fetches; default 16
 }
 
 // Input is what a rule sees for one package.

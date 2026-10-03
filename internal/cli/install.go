@@ -16,6 +16,7 @@ import (
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/pm"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/scripts"
 )
 
@@ -27,7 +28,20 @@ func newInstallCmd(g *globalFlags) *cobra.Command {
 			"  safe-install install -- --omit=dev",
 		Args: installArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInstall(cmd, g, args)
+			return runInstall(cmd, g, args, false)
+		},
+	}
+}
+
+func newAddCmd(g *globalFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <package>... [-- <package manager args>]",
+		Short: "Add packages with scripts disabled, then review their install scripts",
+		Example: "  safe-install add left-pad\n" +
+			"  safe-install add -- -D typescript",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInstall(cmd, g, args, true)
 		},
 	}
 }
@@ -46,71 +60,84 @@ var isInteractive = func() bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string) error {
+// session is one install: the project, its package manager and policy.
+type session struct {
+	cmd     *cobra.Command
+	g       *globalFlags
+	dir     string
+	det     pm.Detection
+	adapter pm.Adapter
+	pol     *policy.Policy
+	w       *lineWriter
+}
+
+func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
+	pol, err := loadPolicy(cmd, g)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	det, err := pm.Detect(dir, g.pm)
+	if err != nil {
+		return nil, err
+	}
+	adapter, err := pm.For(det.Kind, dir)
+	if err != nil {
+		return nil, err
+	}
+	return &session{cmd, g, dir, det, adapter, pol, &lineWriter{w: cmd.ErrOrStderr()}}, nil
+}
+
+func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) error {
+	s, err := newSession(cmd, g)
+	if err != nil {
+		return err
+	}
 	minAge, err := parseMinAge(g.minAge)
 	if err != nil {
 		return err
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	det, err := pm.Detect(dir, g.pm)
-	if err != nil {
-		return err
-	}
-	adapter, err := pm.For(det.Kind, dir)
-	if err != nil {
-		return err
-	}
-
-	stderr := cmd.ErrOrStderr()
-	w := &lineWriter{w: stderr}
+	w := s.w
 	gate := "release-age gate off"
 	if minAge > 0 {
 		gate = "new versions must be " + g.minAge + " old"
-		if !pm.SupportsMinAge(adapter) {
+		if !pm.SupportsMinAge(s.adapter) {
 			gate = "no release-age gate for this package manager (`safe-install check` still flags fresh versions)"
 		}
 	}
-	w.printf("safe-install: using %s (%s); lifecycle scripts disabled; %s\n", det.Kind, det.Source, gate)
-	opts := pm.InstallOptions{Args: pmArgs, MinAge: minAge, Stdout: cmd.OutOrStdout(), Stderr: stderr}
-	if err := adapter.InstallNoScripts(cmd.Context(), dir, opts); err != nil {
+	w.printf("safe-install: using %s (%s); lifecycle scripts disabled; %s\n", s.det.Kind, s.det.Source, gate)
+	opts := pm.InstallOptions{Args: pmArgs, Add: add, MinAge: minAge, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}
+	if err := s.adapter.InstallNoScripts(cmd.Context(), s.dir, opts); err != nil {
 		return err
 	}
 
-	graph, err := lockfile.Load(dir)
+	cands, graph, err := s.candidates()
 	if err != nil {
 		w.printf("safe-install: could not read the lockfile (%v); no dependency scripts were run\n", err)
 		return w.err
 	}
-	cands, _ := scripts.Discover(dir, graph)
-	cands = scripts.Order(cands, graph)
-	assess(cmd, g, cands, graph.Format)
-
-	approved, err := approve(cmd, g, w, cands)
+	approved, err := s.approve(cands)
 	if err != nil {
 		return err
 	}
-	if len(approved) > 0 {
-		targets := make([]pm.Target, 0, len(approved))
-		for _, c := range approved {
-			targets = append(targets, pm.Target{Name: c.Package.Name, Version: c.Package.Version, Dir: c.Dir, Stages: c.Stages()})
-		}
-		w.printf("\nsafe-install: running approved scripts for %d package(s)\n", len(targets))
-		if err := adapter.RunScripts(cmd.Context(), dir, targets, pm.RunOptions{Stdout: cmd.OutOrStdout(), Stderr: stderr}); err != nil {
-			return err
-		}
+	if err := s.run(scripts.Order(approved, graph)); err != nil {
+		return err
 	}
-
 	summarize(w, cands, approved)
-	projectScriptsNote(w, dir, det.Kind)
+	projectScriptsNote(w, s.dir, s.det.Kind)
 	if w.err != nil {
 		return w.err
 	}
 	if g.ci {
+		ran := map[*scripts.Candidate]bool{}
+		for _, c := range approved {
+			ran[c] = true
+		}
 		for _, c := range cands {
-			if c.Level >= analyze.LevelHigh {
+			if !ran[c] && c.Level >= analyze.LevelHigh {
 				return &exitError{ExitPolicyFailure, fmt.Errorf("%s wants to run a %s-risk install script", c.Package.ID, c.Level)}
 			}
 		}
@@ -118,17 +145,31 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string) error {
 	return nil
 }
 
-// assess scans each candidate's scripts and adds the registry rules.
-func assess(cmd *cobra.Command, g *globalFlags, cands []*scripts.Candidate, format lockfile.Format) {
+// candidates finds the installed packages with install scripts, ordered
+// dependencies first, with findings, level and approval state filled in.
+func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
+	graph, err := lockfile.Load(s.dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	cands, _ := scripts.Discover(s.dir, graph)
+	cands = scripts.Order(cands, graph)
+	s.assess(cands, graph.Format)
+	return cands, graph, nil
+}
+
+// assess scans each candidate's scripts, adds the registry rules and checks
+// recorded approvals.
+func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	sub := &lockfile.Graph{Format: format, Packages: map[string]*lockfile.Package{}}
 	for _, c := range cands {
 		sub.Packages[c.Package.ID] = c.Package
 	}
 	registryFindings := map[string][]analyze.Finding{}
-	if fetcher, err := newFetcher(g); err == nil && len(cands) > 0 {
-		minAge, _ := parseMinAge(g.minAge)
-		rep := analyze.Analyze(cmd.Context(), sub, fetcher, analyze.Config{
-			Now: time.Now(), MinReleaseAge: minAge, RegistryURL: registryURL(g),
+	if fetcher, err := newFetcher(s.g); err == nil && len(cands) > 0 {
+		minAge, _ := parseMinAge(s.g.minAge)
+		rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, analyze.Config{
+			Now: time.Now(), MinReleaseAge: minAge, Exclude: s.pol.Excluded, RegistryURL: registryURL(s.g),
 		})
 		for _, res := range rep.Results {
 			registryFindings[res.Package.ID] = res.Findings
@@ -136,35 +177,54 @@ func assess(cmd *cobra.Command, g *globalFlags, cands []*scripts.Candidate, form
 	}
 	for _, c := range cands {
 		c.Findings = append(scripts.Scan(c), registryFindings[c.Package.ID]...)
+		state, f := scripts.ApprovalState(c, s.pol.AllowScripts)
+		c.State = state
+		if f != nil {
+			c.Findings = append(c.Findings, *f)
+		}
 		_, c.Level = analyze.Score(c.Findings)
 	}
 }
 
-// approve decides which candidates run: asked one by one on a terminal,
-// below-high with --yes, none otherwise.
-func approve(cmd *cobra.Command, g *globalFlags, w *lineWriter, cands []*scripts.Candidate) ([]*scripts.Candidate, error) {
-	if len(cands) == 0 {
-		return nil, nil
+// approve decides which candidates run: recorded approvals always; then
+// asked one by one on a terminal, below-high with --yes, none otherwise.
+func (s *session) approve(cands []*scripts.Candidate) ([]*scripts.Candidate, error) {
+	var approved, pending []*scripts.Candidate
+	for _, c := range cands {
+		if c.State == scripts.Approved {
+			approved = append(approved, c)
+		} else {
+			pending = append(pending, c)
+		}
 	}
-	var approved []*scripts.Candidate
+	if len(pending) == 0 {
+		return approved, nil
+	}
+	w := s.w
 	switch {
-	case g.yes:
-		for _, c := range cands {
+	case s.g.yes:
+		for _, c := range pending {
 			if c.Level < analyze.LevelHigh {
 				approved = append(approved, c)
 			}
 		}
-	case !g.ci && isInteractive():
-		in := bufio.NewReader(cmd.InOrStdin())
-		w.printf("\n%d package(s) want to run install scripts.\n", len(cands))
-		for _, c := range cands {
+	case !s.g.ci && isInteractive():
+		in := bufio.NewReader(s.cmd.InOrStdin())
+		w.printf("\n%d package(s) want to run install scripts.\n", len(pending))
+		for _, c := range pending {
 			describe(w, c)
-			w.printf("Run these scripts? [y/N] ")
+			w.printf("Run these scripts? [y]es and remember / [o]nce / [N]o: ")
 			line, err := in.ReadString('\n')
 			if err != nil && !errors.Is(err, io.EOF) {
 				return nil, err
 			}
-			if ans := strings.ToLower(strings.TrimSpace(line)); ans == "y" || ans == "yes" {
+			switch strings.ToLower(strings.TrimSpace(line)) {
+			case "y", "yes":
+				if err := policy.Approve(s.pol.ProjectPath, c.Package.Name, policy.Approval{Version: c.Package.Version, Hash: c.Hash()}); err != nil {
+					return nil, err
+				}
+				approved = append(approved, c)
+			case "o", "once":
 				approved = append(approved, c)
 			}
 			if errors.Is(err, io.EOF) && line == "" {
@@ -174,6 +234,22 @@ func approve(cmd *cobra.Command, g *globalFlags, w *lineWriter, cands []*scripts
 		}
 	}
 	return approved, w.err
+}
+
+// run executes the candidates' scripts through the package manager.
+func (s *session) run(cands []*scripts.Candidate) error {
+	if len(cands) == 0 {
+		return nil
+	}
+	targets := make([]pm.Target, 0, len(cands))
+	for _, c := range cands {
+		targets = append(targets, pm.Target{Name: c.Package.Name, Version: c.Package.Version, Dir: c.Dir, Stages: c.Stages()})
+	}
+	s.w.printf("\nsafe-install: running approved scripts for %d package(s)\n", len(targets))
+	if s.w.err != nil {
+		return s.w.err
+	}
+	return s.adapter.RunScripts(s.cmd.Context(), s.dir, targets, pm.RunOptions{Stdout: s.cmd.OutOrStdout(), Stderr: s.cmd.ErrOrStderr()})
 }
 
 func describe(w *lineWriter, c *scripts.Candidate) {
@@ -189,6 +265,10 @@ func describe(w *lineWriter, c *scripts.Candidate) {
 		extra = " (" + strings.Join(tags, ", ") + ")"
 	}
 	w.printf("\n%s%s  risk: %s\n", c.Package.ID, extra, strings.ToUpper(c.Level.String()))
+	describeScripts(w, c)
+}
+
+func describeScripts(w *lineWriter, c *scripts.Candidate) {
 	for _, s := range c.Stages() {
 		note := ""
 		if c.Implicit && s == "install" {
@@ -220,18 +300,11 @@ func summarize(w *lineWriter, cands, approved []*scripts.Candidate) {
 	}
 	w.printf("\nsafe-install: ran install scripts for %d package(s), skipped %d\n", len(approved), len(skipped))
 	for _, c := range skipped {
-		w.printf("\nskipped %s  risk: %s\n", c.Package.ID, strings.ToUpper(c.Level.String()))
-		for _, s := range c.Stages() {
-			w.printf("  %-11s %s\n", s+":", c.Scripts[s])
-		}
-		for _, f := range c.Findings {
-			if f.Rule != "SI-SCR-001" {
-				w.printf("  ! %s  %s\n", f.Rule, f.Message)
-			}
-		}
+		w.printf("\nskipped %s  risk: %s  (%s)\n", c.Package.ID, strings.ToUpper(c.Level.String()), c.State)
+		describeScripts(w, c)
 	}
 	if len(skipped) > 0 {
-		w.printf("\nSkipped packages may not work until their scripts run. Re-run safe-install in a terminal to review them.\n")
+		w.printf("\nSkipped packages may not work until their scripts run. Review and run them with `safe-install approve <package>`.\n")
 	}
 }
 

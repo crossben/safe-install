@@ -41,6 +41,7 @@ func checkProject(t *testing.T, publishedAgo time.Duration, withFixture bool) {
 		t.Fatal(err)
 	}
 	t.Setenv("SAFE_INSTALL_REGISTRY_FIXTURES", fixtures)
+	t.Setenv("SAFE_INSTALL_CONFIG_DIR", t.TempDir())
 	t.Chdir(dir)
 }
 

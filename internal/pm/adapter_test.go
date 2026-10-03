@@ -36,3 +36,9 @@ func TestYarnFlavor(t *testing.T) {
 		})
 	}
 }
+
+func TestAddVerb(t *testing.T) {
+	if verb(InstallOptions{Add: true}, "install") != "add" || verb(InstallOptions{}, "install") != "install" {
+		t.Fatal("verb")
+	}
+}

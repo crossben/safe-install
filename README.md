@@ -48,6 +48,46 @@ Your project's own lifecycle scripts are never run for you.
 Running approved scripts uses `npm run` inside each package's directory, so npm must be
 on `PATH` (it ships with Node).
 
+## Approvals and policy
+
+Answering **y** at the prompt (or running `safe-install approve <pkg>`) records the approval
+in `.safe-install.json`. Commit it so your team shares approvals:
+
+```json
+{
+  "minReleaseAge": "3d",
+  "minReleaseAgeExclude": ["typescript", "@types/*"],
+  "failOn": "high",
+  "allowScripts": {
+    "esbuild": { "version": "0.25.10", "hash": "sha256-…", "at": "2026-10-03" }
+  }
+}
+```
+
+An approval is pinned to a hash of the scripts **and the files they run**: if either
+changes, safe-install reports `SI-SCR-005` and asks again. Approved scripts run without a
+prompt, also in CI. A user-wide file with the same format lives in your config directory
+(`approve --global`); the project file wins on conflicts, and flags win over both.
+
+```sh
+safe-install scripts              # packages with install scripts and their approval state
+safe-install approve esbuild      # approve and run now (--revoke, --global, --no-run)
+safe-install add left-pad         # add packages through the same review
+safe-install explain SI-SCR-002   # what a rule means and what to do
+```
+
+`minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
+the package manager itself applies to every package.
+
+### Use it every time (opt-in)
+
+`safe-install shell-init <bash|zsh|fish|pwsh>` prints functions that send `npm install`,
+`pnpm add`, `yarn`, `bun i` and friends through safe-install. It changes nothing on its own:
+
+```sh
+eval "$(safe-install shell-init bash)"   # add to ~/.bashrc or ~/.zshrc
+```
+
 ## Check without installing
 
 ```sh

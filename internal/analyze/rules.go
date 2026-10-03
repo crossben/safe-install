@@ -16,7 +16,8 @@ func (recencyRule) ID() string { return "SI-REC-001" }
 
 func (r recencyRule) Check(in *Input) []Finding {
 	published := in.Doc.Published(in.Package.Version)
-	if in.Config.MinReleaseAge <= 0 || published.IsZero() {
+	if in.Config.MinReleaseAge <= 0 || published.IsZero() ||
+		(in.Config.Exclude != nil && in.Config.Exclude(in.Package.Name)) {
 		return nil
 	}
 	age := in.Config.Now.Sub(published)

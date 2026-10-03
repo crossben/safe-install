@@ -229,3 +229,39 @@ func TestParseLevel(t *testing.T) {
 		t.Errorf("expected error, got %v", err)
 	}
 }
+
+func TestReleaseAgeExclude(t *testing.T) {
+	f := &fakeFetcher{docs: map[string]*registry.Packument{
+		"typescript": doc("typescript", ver{v: "6.0.0", age: time.Hour}),
+		"react":      doc("react", ver{v: "20.0.0", age: time.Hour}),
+	}}
+	r := Analyze(context.Background(), graph(
+		&lockfile.Package{Name: "typescript", Version: "6.0.0"},
+		&lockfile.Package{Name: "react", Version: "20.0.0"},
+	), f, Config{Now: now, MinReleaseAge: 72 * time.Hour, Exclude: func(n string) bool { return n == "typescript" }})
+	if res := result(t, r, "typescript@6.0.0"); len(res.Findings) != 0 {
+		t.Errorf("excluded package flagged: %+v", res.Findings)
+	}
+	if res := result(t, r, "react@20.0.0"); !hasRule(res, "SI-REC-001", Medium) {
+		t.Errorf("react not flagged: %+v", res.Findings)
+	}
+}
+
+func TestEveryRuleIsExplained(t *testing.T) {
+	ids := []string{"SI-SCR-001", "SI-SCR-002", "SI-SCR-003", "SI-SCR-004", "SI-SCR-005"}
+	for _, r := range Rules {
+		ids = append(ids, r.ID())
+	}
+	for _, id := range ids {
+		e, ok := Explain(id)
+		if !ok || e.Title == "" || e.Why == "" || e.Fix == "" {
+			t.Errorf("%s: missing explanation %+v", id, e)
+		}
+	}
+	if _, ok := Explain("si-rec-001"); !ok {
+		t.Error("Explain should ignore case")
+	}
+	if _, ok := Explain("SI-NOPE"); ok {
+		t.Error("unknown rule explained")
+	}
+}

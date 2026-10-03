@@ -18,7 +18,7 @@ type pnpmAdapter struct{}
 func (pnpmAdapter) Name() Kind { return PNPM }
 
 func (pnpmAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "pnpm", append(append([]string{"install"}, opts.Args...), "--ignore-scripts")...)
+	cmd, err := command(ctx, dir, "pnpm", append(append([]string{verb(opts, "install")}, opts.Args...), "--ignore-scripts")...)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ type yarnClassicAdapter struct{}
 func (yarnClassicAdapter) Name() Kind { return Yarn }
 
 func (yarnClassicAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "yarn", append(append([]string{"install"}, opts.Args...), "--ignore-scripts")...)
+	cmd, err := command(ctx, dir, "yarn", append(append([]string{verb(opts, "install")}, opts.Args...), "--ignore-scripts")...)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ type yarnBerryAdapter struct{}
 func (yarnBerryAdapter) Name() Kind { return Yarn }
 
 func (yarnBerryAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "yarn", append(append([]string{"install"}, opts.Args...), "--mode=skip-build")...)
+	cmd, err := command(ctx, dir, "yarn", append(append([]string{verb(opts, "install")}, opts.Args...), "--mode=skip-build")...)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ type bunAdapter struct{}
 func (bunAdapter) Name() Kind { return Bun }
 
 func (bunAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	args := append([]string{"install"}, opts.Args...)
+	args := append([]string{verb(opts, "install")}, opts.Args...)
 	if opts.MinAge > 0 {
 		args = append(args, fmt.Sprintf("--minimum-release-age=%d", int64(opts.MinAge.Seconds())))
 	}
@@ -110,6 +110,13 @@ func (bunAdapter) InstallNoScripts(ctx context.Context, dir string, opts Install
 
 func (bunAdapter) RunScripts(ctx context.Context, _ string, targets []Target, opts RunOptions) error {
 	return runInPackageDirs(ctx, targets, opts)
+}
+
+func verb(opts InstallOptions, install string) string {
+	if opts.Add {
+		return "add"
+	}
+	return install
 }
 
 // isBerry decides between Yarn classic and berry from the project alone:

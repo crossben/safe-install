@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/crossben/safe-install/internal/policy"
 )
 
 // Exit codes (plan §8).
@@ -48,7 +50,7 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		Args:          installArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInstall(cmd, &g, args)
+			return runInstall(cmd, &g, args, false)
 		},
 	}
 
@@ -61,8 +63,26 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.registry, "registry", "", "registry URL (default https://registry.npmjs.org)")
 	pf.StringVar(&g.minAge, "min-age", "72h", "minimum release age, e.g. 72h or 3d; 0 disables")
 
-	root.AddCommand(newInstallCmd(&g), newCheckCmd(&g), newVersionCmd())
+	root.AddCommand(newInstallCmd(&g), newAddCmd(&g), newCheckCmd(&g), newScriptsCmd(&g),
+		newApproveCmd(&g), newExplainCmd(), newShellInitCmd(), newVersionCmd())
 	return root
+}
+
+// loadPolicy reads the policy for the current directory and applies it
+// where the user did not pass the matching flag.
+func loadPolicy(cmd *cobra.Command, g *globalFlags) (*policy.Policy, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	pol, err := policy.Load(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !cmd.Flags().Changed("min-age") && pol.MinReleaseAge != "" {
+		g.minAge = pol.MinReleaseAge
+	}
+	return pol, nil
 }
 
 // Execute runs the CLI and returns the process exit code.

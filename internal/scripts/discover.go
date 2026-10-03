@@ -25,6 +25,7 @@ type Candidate struct {
 
 	Findings []analyze.Finding
 	Level    analyze.Level
+	State    State // approval status against the policy
 }
 
 // Stages returns the candidate's lifecycle stages in run order.

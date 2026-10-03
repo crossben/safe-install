@@ -8,6 +8,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/policy"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -173,4 +174,43 @@ func longBlob() string {
 		b[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"[i*7%64]
 	}
 	return string(b)
+}
+
+func TestHash(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "install.js"), "console.log(1)")
+	c := &Candidate{Dir: dir, Scripts: map[string]string{"preinstall": "echo a", "postinstall": "node install.js"}}
+	h := c.Hash()
+	if h == "" || h[:7] != "sha256-" {
+		t.Fatalf("hash = %q", h)
+	}
+	for i := 0; i < 20; i++ { // map iteration order must not matter
+		if c.Hash() != h {
+			t.Fatal("hash is not stable")
+		}
+	}
+	writeFile(t, filepath.Join(dir, "install.js"), "console.log(2)")
+	if c.Hash() == h {
+		t.Fatal("hash ignores the file the script runs")
+	}
+	c2 := &Candidate{Dir: dir, Scripts: map[string]string{"preinstall": "echo b", "postinstall": "node install.js"}}
+	if c2.Hash() == c.Hash() {
+		t.Fatal("hash ignores the command")
+	}
+}
+
+func TestApprovalState(t *testing.T) {
+	c := &Candidate{Package: &lockfile.Package{ID: "a@2.0.0", Name: "a", Version: "2.0.0"}, Dir: t.TempDir(), Scripts: map[string]string{"install": "echo hi"}}
+	approved := map[string]policy.Approval{"a": {Version: "2.0.0", Hash: c.Hash()}}
+	if st, f := ApprovalState(c, approved); st != Approved || f != nil {
+		t.Fatalf("matching hash: %v %v", st, f)
+	}
+	if st, _ := ApprovalState(c, nil); st != Unapproved {
+		t.Fatalf("no approval: %v", st)
+	}
+	changed := map[string]policy.Approval{"a": {Version: "1.0.0", Hash: "sha256-old"}}
+	st, f := ApprovalState(c, changed)
+	if st != Changed || f == nil || f.Rule != "SI-SCR-005" || f.Severity != analyze.High {
+		t.Fatalf("changed: %v %+v", st, f)
+	}
 }

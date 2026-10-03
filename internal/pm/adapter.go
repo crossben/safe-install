@@ -26,6 +26,7 @@ type Adapter interface {
 // InstallOptions configures an install.
 type InstallOptions struct {
 	Args           []string      // passed through to the package manager
+	Add            bool          // add packages (named in Args) instead of installing
 	MinAge         time.Duration // skip versions younger than this when resolving; 0 disables
 	Stdout, Stderr io.Writer
 }

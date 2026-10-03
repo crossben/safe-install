@@ -40,7 +40,7 @@ func (npmAdapter) installCmd(ctx context.Context, dir string, args []string, bef
 	}
 	// Flag last (npm lets the last flag win) and env, so neither user args
 	// nor .npmrc can switch scripts back on.
-	argv := append([]string{"install"}, args...)
+	argv := append([]string{"install"}, args...) // npm adds packages with install too
 	if !before.IsZero() {
 		argv = append(argv, "--before", before.UTC().Format(time.RFC3339))
 	}

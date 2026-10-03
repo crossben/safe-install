@@ -14,6 +14,7 @@ import (
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/pm"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/registry"
 	"github.com/crossben/safe-install/internal/report"
 )
@@ -27,18 +28,25 @@ func newCheckCmd(g *globalFlags) *cobra.Command {
 			"Exits 1 when a package reaches --fail-on, 3 when metadata could not be fetched.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			pol, err := loadPolicy(cmd, g)
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("fail-on") && pol.FailOn != "" {
+				failOn = pol.FailOn
+			}
 			threshold, err := analyze.ParseLevel(failOn)
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd, g, threshold)
+			return runCheck(cmd, g, pol, threshold)
 		},
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 when a package reaches this level: low, medium, high, block, none")
 	return cmd
 }
 
-func runCheck(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
+func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level) error {
 	minAge, err := parseMinAge(g.minAge)
 	if err != nil {
 		return err
@@ -66,6 +74,7 @@ func runCheck(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analyze.Config{
 		Now:           time.Now(),
 		MinReleaseAge: minAge,
+		Exclude:       pol.Excluded,
 		RegistryURL:   registryURL(g),
 	})
 
