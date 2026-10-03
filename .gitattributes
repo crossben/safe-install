@@ -1,0 +1,4 @@
+# Check out text with LF everywhere: golden files and lockfile fixtures are
+# compared byte for byte. (Parsing CRLF lockfiles is tested separately.)
+* text=auto eol=lf
+*.tgz binary

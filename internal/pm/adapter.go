@@ -2,11 +2,14 @@ package pm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -69,18 +72,39 @@ func SupportsMinAge(a Adapter) bool {
 	return !classic
 }
 
-// command finds bin on PATH, falling back to `corepack <bin>` for package
-// managers that are usually provided by corepack.
+// command finds the program for bin. pnpm and yarn go through corepack
+// when the project pins them with packageManager (a global Yarn 1 refuses
+// to run a project pinned to Yarn 4), or when they are not on PATH.
 func command(ctx context.Context, dir, bin string, args ...string) (*exec.Cmd, error) {
+	managed := bin == "pnpm" || bin == "yarn"
+	if cp, err := exec.LookPath("corepack"); err == nil && managed && pinnedByPackageManager(dir, bin) {
+		return newCmd(ctx, dir, cp, append([]string{bin}, args...)), nil
+	}
 	if path, err := exec.LookPath(bin); err == nil {
 		return newCmd(ctx, dir, path, args), nil
 	}
-	if bin == "pnpm" || bin == "yarn" {
+	if managed {
 		if cp, err := exec.LookPath("corepack"); err == nil {
 			return newCmd(ctx, dir, cp, append([]string{bin}, args...)), nil
 		}
 	}
 	return nil, fmt.Errorf("%s not found in PATH", bin)
+}
+
+// pinnedByPackageManager reports whether dir's package.json pins bin with
+// the packageManager field ("yarn@4.10.3"). Only pnpm and yarn qualify.
+func pinnedByPackageManager(dir, bin string) bool {
+	if bin != "pnpm" && bin != "yarn" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "package.json")) // #nosec G304 -- project manifest
+	if err != nil {
+		return false
+	}
+	var m struct {
+		PackageManager string `json:"packageManager"`
+	}
+	return json.Unmarshal(data, &m) == nil && strings.HasPrefix(m.PackageManager, bin+"@")
 }
 
 func newCmd(ctx context.Context, dir, bin string, args []string) *exec.Cmd {

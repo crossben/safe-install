@@ -42,3 +42,23 @@ func TestAddVerb(t *testing.T) {
 		t.Fatal("verb")
 	}
 }
+
+func TestPinnedByPackageManager(t *testing.T) {
+	tests := []struct {
+		manifest, bin string
+		want          bool
+	}{
+		{`{"packageManager":"yarn@4.10.3"}`, "yarn", true},
+		{`{"packageManager":"yarn@1.22.22+sha512.abc"}`, "yarn", true},
+		{`{"packageManager":"pnpm@10.0.0"}`, "pnpm", true},
+		{`{"packageManager":"pnpm@10.0.0"}`, "yarn", false},
+		{`{"packageManager":"npm@11.0.0"}`, "npm", false}, // corepack does not manage npm here
+		{`{}`, "yarn", false},
+	}
+	for _, tt := range tests {
+		dir := writeFiles(t, map[string]string{"package.json": tt.manifest})
+		if got := pinnedByPackageManager(dir, tt.bin); got != tt.want {
+			t.Errorf("pinnedByPackageManager(%s, %s) = %v, want %v", tt.manifest, tt.bin, got, tt.want)
+		}
+	}
+}

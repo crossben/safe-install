@@ -1,9 +1,9 @@
 package pm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,8 +111,9 @@ func TestAdaptersE2E(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := a.InstallNoScripts(ctx, proj, InstallOptions{Stdout: io.Discard, Stderr: io.Discard}); err != nil {
-				t.Fatalf("install: %v", err)
+			var out bytes.Buffer
+			if err := a.InstallNoScripts(ctx, proj, InstallOptions{Stdout: &out, Stderr: &out}); err != nil {
+				t.Fatalf("install: %v\n%s", err, out.String())
 			}
 			if got := markers(t, markerDir); len(got) != 0 {
 				t.Fatalf("scripts ran during install: %v", got)
@@ -122,8 +123,9 @@ func TestAdaptersE2E(t *testing.T) {
 			if dir, ok := findInstalled(proj, "good-dep"); ok {
 				target.Dir = dir
 			}
-			if err := a.RunScripts(ctx, proj, []Target{target}, RunOptions{Stdout: io.Discard, Stderr: io.Discard}); err != nil {
-				t.Fatalf("run scripts: %v", err)
+			out.Reset()
+			if err := a.RunScripts(ctx, proj, []Target{target}, RunOptions{Stdout: &out, Stderr: &out}); err != nil {
+				t.Fatalf("run scripts: %v\n%s", err, out.String())
 			}
 			want := []string{"good-dep-postinstall", "good-dep-preinstall"}
 			if got := markers(t, markerDir); !slices.Equal(got, want) {

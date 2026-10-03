@@ -3,6 +3,7 @@ package monitor
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -104,6 +105,9 @@ func TestClassify(t *testing.T) {
 }
 
 func TestClassifierFromEnvHome(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the monitor only runs on Linux, where HOME is a slash path")
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	c := NewClassifier("/p", "/p/node_modules/x")

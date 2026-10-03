@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/crossben/safe-install/internal/analyze"
@@ -61,7 +61,7 @@ func NewClassifier(project, pkg string) *Classifier {
 func (c *Classifier) Classify(ev Event) (Finding, bool) {
 	switch ev.Kind {
 	case Exec:
-		name := filepath.Base(ev.Path)
+		name := path.Base(ev.Path)
 		if networkTools[strings.TrimSuffix(name, ".exe")] {
 			return Finding{"SI-MON-002", analyze.Medium, "runs " + clip(strings.Join(ev.Args, " "), 120)}, true
 		}
@@ -89,36 +89,38 @@ func (c *Classifier) Classify(ev Event) (Finding, bool) {
 	return Finding{}, false
 }
 
-func (c *Classifier) write(path, verb string) (Finding, bool) {
-	if !filepath.IsAbs(path) {
+// Paths come from strace, so they are always slash-separated Linux paths:
+// the path package is used throughout, whatever OS this is compiled for.
+func (c *Classifier) write(p, verb string) (Finding, bool) {
+	if !path.IsAbs(p) {
 		return Finding{}, false // relative: inside the package's working directory
 	}
-	path = filepath.Clean(path)
+	p = path.Clean(p)
 	switch {
-	case c.under(path, persistence), strings.Contains(path, "/.git/hooks/"), prefixed(path, systemDirs):
-		return Finding{"SI-MON-004", analyze.High, fmt.Sprintf("%s %s", verb, c.pretty(path))}, true
-	case c.allowed(path):
+	case c.under(p, persistence), strings.Contains(p, "/.git/hooks/"), prefixed(p, systemDirs):
+		return Finding{"SI-MON-004", analyze.High, fmt.Sprintf("%s %s", verb, c.pretty(p))}, true
+	case c.allowed(p):
 		return Finding{}, false
 	}
-	return Finding{"SI-MON-005", analyze.Medium, fmt.Sprintf("%s %s, outside the project", verb, c.pretty(path))}, true
+	return Finding{"SI-MON-005", analyze.Medium, fmt.Sprintf("%s %s, outside the project", verb, c.pretty(p))}, true
 }
 
-func (c *Classifier) allowed(path string) bool {
+func (c *Classifier) allowed(p string) bool {
 	for _, root := range []string{c.Project, c.Package, c.Temp, "/tmp", "/dev", "/proc", "/run/user"} {
-		if root != "" && within(path, root) {
+		if root != "" && within(p, root) {
 			return true
 		}
 	}
-	return c.under(path, homeCaches)
+	return c.under(p, homeCaches)
 }
 
-// under reports whether path is one of the $HOME-relative entries
+// under reports whether p is one of the $HOME-relative entries
 // (a trailing "/" means anything inside that directory).
-func (c *Classifier) under(path string, entries []string) bool {
-	if c.Home == "" || !within(path, c.Home) {
+func (c *Classifier) under(p string, entries []string) bool {
+	if c.Home == "" || !within(p, c.Home) {
 		return false
 	}
-	rel := strings.TrimPrefix(filepath.ToSlash(path), filepath.ToSlash(c.Home)+"/")
+	rel := strings.TrimPrefix(p, path.Clean(c.Home)+"/")
 	for _, e := range entries {
 		if strings.HasSuffix(e, "/") {
 			if strings.HasPrefix(rel+"/", e) {
@@ -131,21 +133,21 @@ func (c *Classifier) under(path string, entries []string) bool {
 	return false
 }
 
-func (c *Classifier) pretty(path string) string {
-	if c.Home != "" && within(path, c.Home) {
-		return "~" + strings.TrimPrefix(path, c.Home)
+func (c *Classifier) pretty(p string) string {
+	if c.Home != "" && within(p, c.Home) {
+		return "~" + strings.TrimPrefix(p, path.Clean(c.Home))
 	}
-	return path
+	return p
 }
 
-func within(path, root string) bool {
-	root = filepath.Clean(root)
-	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+func within(p, root string) bool {
+	root = path.Clean(root)
+	return p == root || strings.HasPrefix(p, root+"/")
 }
 
-func prefixed(path string, dirs []string) bool {
+func prefixed(p string, dirs []string) bool {
 	for _, d := range dirs {
-		if strings.HasPrefix(path+"/", d) {
+		if strings.HasPrefix(p+"/", d) {
 			return true
 		}
 	}

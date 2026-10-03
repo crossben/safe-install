@@ -69,7 +69,7 @@ func testGolden(t *testing.T, set, dir string, format Format) {
 			if err != nil {
 				t.Fatalf("%v (run with -update)", err)
 			}
-			if got != string(want) {
+			if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
 				t.Fatalf("graph differs from %s (run with -update and review the diff)\n%s", golden, got)
 			}
 		}
@@ -238,4 +238,41 @@ func FuzzBunJSONC(f *testing.F) {
 	f.Fuzz(func(_ *testing.T, b []byte) {
 		_, _ = parseBun(b) // must not panic
 	})
+}
+
+// Windows checkouts (core.autocrlf) turn lockfiles into CRLF; they must parse the same.
+func TestCRLFLockfiles(t *testing.T) {
+	for _, set := range fixtureSets {
+		for _, fx := range basicFixtures {
+			t.Run(set+"/"+fx.dir, func(t *testing.T) {
+				src := filepath.Join("testdata", set, fx.dir)
+				dst := t.TempDir()
+				err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						return err
+					}
+					rel, _ := filepath.Rel(src, path)
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					crlf := strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n", "\r\n")
+					if err := os.MkdirAll(filepath.Dir(filepath.Join(dst, rel)), 0o750); err != nil {
+						return err
+					}
+					return os.WriteFile(filepath.Join(dst, rel), []byte(crlf), 0o600)
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				g, err := Load(dst)
+				if err != nil {
+					t.Fatalf("Load CRLF: %v", err)
+				}
+				if got, want := g.shape(), loadFixture(t, set, fx.dir).shape(); got != want {
+					t.Fatalf("CRLF parse differs:\n--- LF\n%s\n--- CRLF\n%s", want, got)
+				}
+			})
+		}
+	}
 }
