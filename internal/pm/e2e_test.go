@@ -101,6 +101,11 @@ func TestAdaptersE2E(t *testing.T) {
 			markerDir := t.TempDir()
 			t.Setenv("MARKER_DIR", markerDir)
 			t.Setenv("COREPACK_ENABLE_DOWNLOAD_PROMPT", "0")
+			// These projects have no lockfile yet. On CI (CI=true), Yarn berry
+			// defaults to immutable installs and pnpm to --frozen-lockfile, which
+			// refuse to create one.
+			t.Setenv("YARN_ENABLE_IMMUTABLE_INSTALLS", "false")
+			t.Setenv("npm_config_frozen_lockfile", "false")
 
 			a, err := For(tc.kind, proj)
 			if err != nil {
