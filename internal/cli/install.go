@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -32,6 +33,10 @@ func installArgs(cmd *cobra.Command, args []string) error {
 }
 
 func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string) error {
+	minAge, err := parseMinAge(g.minAge)
+	if err != nil {
+		return err
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -46,10 +51,16 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string) error {
 	}
 
 	stderr := cmd.ErrOrStderr()
-	if _, err := fmt.Fprintf(stderr, "safe-install: using %s (%s); lifecycle scripts disabled\n", det.Kind, det.Source); err != nil {
+	opts := pm.InstallOptions{Args: pmArgs, Stdout: cmd.OutOrStdout(), Stderr: stderr}
+	gate := "release-age gate off"
+	if minAge > 0 {
+		opts.Before = time.Now().Add(-minAge)
+		gate = "new versions must be " + g.minAge + " old"
+	}
+	if _, err := fmt.Fprintf(stderr, "safe-install: using %s (%s); lifecycle scripts disabled; %s\n", det.Kind, det.Source, gate); err != nil {
 		return err
 	}
-	if err := adapter.InstallNoScripts(cmd.Context(), dir, pmArgs, cmd.OutOrStdout(), stderr); err != nil {
+	if err := adapter.InstallNoScripts(cmd.Context(), dir, opts); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(stderr, "safe-install: done; no install scripts were run")

@@ -26,19 +26,28 @@ var names = []string{
 	"bun.lockb",
 }
 
-// Load parses the lockfile in dir (the first one found, in the order above).
-func Load(dir string) (*Graph, error) {
+// Find returns the path of the lockfile in dir (the first one found, in the order above).
+func Find(dir string) (string, error) {
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil {
-			g, err := LoadFile(path)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", name, err)
-			}
-			return g, nil
+			return path, nil
 		}
 	}
-	return nil, ErrNoLockfile
+	return "", ErrNoLockfile
+}
+
+// Load parses the lockfile in dir.
+func Load(dir string) (*Graph, error) {
+	path, err := Find(dir)
+	if err != nil {
+		return nil, err
+	}
+	g, err := LoadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	return g, nil
 }
 
 // LoadFile parses one lockfile; its directory must hold the project's package.json.

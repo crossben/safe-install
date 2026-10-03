@@ -30,6 +30,18 @@ go build -o bin/safe-install ./cmd/safe-install
 ./bin/safe-install version
 ```
 
+## Check without installing
+
+```sh
+safe-install check                  # score every package in the lockfile
+safe-install check --fail-on medium # exit 1 at medium risk or worse
+safe-install check --format json
+```
+
+New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
+passes this to the package manager so fresh releases are not picked up, and `check`
+flags any already in the lockfile.
+
 ## Privacy
 
 No telemetry. `safe-install` only talks to your configured package registry and, for
@@ -38,6 +50,10 @@ advisories, the OSV API.
 ## Security
 
 Found a bypass? Please report it privately, see [SECURITY.md](SECURITY.md).
+
+## Acknowledgements
+
+The release-age gate is inspired by [safe-npm](https://github.com/kevinslin/safe-npm).
 
 ## License
 

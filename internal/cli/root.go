@@ -25,6 +25,7 @@ type globalFlags struct {
 	format   string
 	offline  bool
 	registry string
+	minAge   string
 }
 
 // exitError carries a specific exit code up to Execute.
@@ -57,9 +58,10 @@ func newRootCmd() *cobra.Command {
 	pf.BoolVar(&g.ci, "ci", false, "non-interactive mode; fail on policy violations")
 	pf.StringVar(&g.format, "format", "text", "output format: text, json, sarif")
 	pf.BoolVar(&g.offline, "offline", false, "use cached registry data only")
-	pf.StringVar(&g.registry, "registry", "", "registry URL (default: from project/user npm config)")
+	pf.StringVar(&g.registry, "registry", "", "registry URL (default https://registry.npmjs.org)")
+	pf.StringVar(&g.minAge, "min-age", "72h", "minimum release age, e.g. 72h or 3d; 0 disables")
 
-	root.AddCommand(newInstallCmd(&g), newVersionCmd())
+	root.AddCommand(newInstallCmd(&g), newCheckCmd(&g), newVersionCmd())
 	return root
 }
 

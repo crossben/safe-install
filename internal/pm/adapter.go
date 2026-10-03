@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 // ErrNotYetSupported is returned for package managers detected but not driven yet.
@@ -14,8 +15,15 @@ var ErrNotYetSupported = errors.New("not supported yet")
 type Adapter interface {
 	Name() Kind
 	// InstallNoScripts installs dependencies in dir with every lifecycle
-	// script disabled. args are passed through to the package manager.
-	InstallNoScripts(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) error
+	// script disabled.
+	InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error
+}
+
+// InstallOptions configures an install.
+type InstallOptions struct {
+	Args           []string  // passed through to the package manager
+	Before         time.Time // resolve only versions published before this; zero disables
+	Stdout, Stderr io.Writer
 }
 
 // For returns the adapter for k.

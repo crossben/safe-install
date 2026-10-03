@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestNPMInstallCommand(t *testing.T) {
-	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", []string{"--ignore-scripts=false", "--no-audit"})
+	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", []string{"--ignore-scripts=false", "--no-audit"}, time.Time{})
 	if err != nil {
 		t.Skipf("npm not installed: %v", err)
 	}
@@ -27,6 +28,18 @@ func TestNPMInstallCommand(t *testing.T) {
 	}
 	if !slices.Contains(cmd.Env, "npm_config_ignore_scripts=true") {
 		t.Fatal("npm_config_ignore_scripts=true not set in env")
+	}
+}
+
+func TestNPMInstallBefore(t *testing.T) {
+	before := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", nil, before)
+	if err != nil {
+		t.Skipf("npm not installed: %v", err)
+	}
+	want := []string{"install", "--before", "2026-09-30T12:00:00Z", "--ignore-scripts"}
+	if got := cmd.Args[1:]; !slices.Equal(got, want) {
+		t.Fatalf("args = %q, want %q", got, want)
 	}
 }
 
@@ -78,7 +91,8 @@ func TestNPMInstallNoScriptsE2E(t *testing.T) {
 	proj := newScriptedProject(t)
 	markers = t.TempDir()
 	t.Setenv("MARKER_DIR", markers)
-	if err := (npmAdapter{}).InstallNoScripts(ctx, proj, []string{"--no-audit", "--no-fund"}, io.Discard, io.Discard); err != nil {
+	opts := InstallOptions{Args: []string{"--no-audit", "--no-fund"}, Stdout: io.Discard, Stderr: io.Discard}
+	if err := (npmAdapter{}).InstallNoScripts(ctx, proj, opts); err != nil {
 		t.Fatalf("InstallNoScripts: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(proj, "node_modules", "evil-dep", "package.json")); err != nil {
