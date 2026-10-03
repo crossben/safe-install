@@ -32,9 +32,20 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y strace
       - run: go vet ./...
-      - run: go test -race ./...
+      - name: go test
+        shell: bash
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+        run: |
+          set -o pipefail
+          go test -race ./... 2>&1 | tee "$RUNNER_TEMP/test.log"
+      # Surface failing tests as annotations on the run page.
+      - name: Report test failures
+        if: failure()
+        shell: bash
+        run: |
+          grep -E -- '--- FAIL|_test\.go:[0-9]+:|^panic:|^FAIL' "$RUNNER_TEMP/test.log" | head -40 |
+            while IFS= read -r line; do echo "::error title=go test (${{ matrix.os }})::$line"; done
       - run: go build ./cmd/safe-install
 
   lint:
