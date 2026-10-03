@@ -1,0 +1,43 @@
+name: release
+
+# Push a tag like v0.1.0 to publish: archives, deb/rpm/apk, SBOMs, a keyless
+# cosign signature of checksums.txt, SLSA build provenance, and the Homebrew
+# cask (Casks/) and Scoop manifest (bucket/) committed to main.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the release; commit Casks/ and bucket/ to main
+      id-token: write     # keyless signing and provenance (Sigstore OIDC)
+      attestations: write # gh attestation verify
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
+            dist/*.apk

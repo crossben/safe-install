@@ -7,8 +7,6 @@ It analyzes your whole dependency tree from the lockfile, installs with lifecycl
 disabled, shows you every package that wants to run a script, and runs only the ones you
 approved. Linux, macOS and Windows; single static binary.
 
-> **Status:** early development. Nothing to install yet.
-
 ## How it works
 
 1. **Analyze**: lockfile → full tree → registry metadata → risk score per package
@@ -21,16 +19,46 @@ approved. Linux, macOS and Windows; single static binary.
 
 npm · pnpm · Yarn classic · Yarn berry · bun
 
-## Build from source
-
-Requires Go 1.25+.
+## Get it
 
 ```sh
-go build -o bin/safe-install ./cmd/safe-install
-./bin/safe-install version
+# macOS / Linux (Homebrew)
+brew tap crossben/safe-install https://github.com/crossben/safe-install
+brew install --cask safe-install
+
+# Windows (Scoop)
+scoop bucket add safe-install https://github.com/crossben/safe-install
+scoop install safe-install
+
+# Debian / Ubuntu, Fedora / RHEL, Alpine: download the .deb / .rpm / .apk from the latest release
+sudo apt install ./safe-install_*_linux_amd64.deb
+
+# Anything else: download an archive from the releases page, or build from source (Go 1.25+)
+go install github.com/crossben/safe-install/cmd/safe-install@latest
 ```
 
-## Install
+On macOS, Homebrew keeps the quarantine flag on the (not yet notarized) binary; the cask
+prints the one-line `xattr` command to clear it yourself.
+
+safe-install is deliberately **not** distributed through npm: a supply-chain tool should
+not be installed through the channel it protects.
+
+### Verify a download
+
+Every release signs `checksums.txt` with [Sigstore](https://www.sigstore.dev/) (keyless,
+bound to this repository's release workflow) and attaches SLSA build provenance:
+
+```sh
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --certificate-identity-regexp '^https://github.com/crossben/safe-install/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+
+gh attestation verify safe-install_linux_amd64.tar.gz --repo crossben/safe-install
+```
+
+## Usage
 
 ```sh
 safe-install                 # or: safe-install install
@@ -121,15 +149,16 @@ count one level below their advisory severity (`npm audit` covers those in depth
 ## GitHub Action
 
 ```yaml
-- uses: crossben/safe-install@main
+- uses: crossben/safe-install@v0.1.0
   with:
     working-directory: .   # where package.json and the lockfile are
     fail-on: high          # low, medium, high, block, none
     sarif: true            # upload to code scanning (needs security-events: write)
 ```
 
-The action builds safe-install from source for now; it fails the job when a package
-reaches `fail-on`.
+The action downloads the release binary for the runner (checksum-verified; `version:`
+picks a release, `source` builds from the action's checkout) and fails the job when a
+package reaches `fail-on`.
 
 New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
 passes this to the package manager so fresh releases are not picked up, and `check`

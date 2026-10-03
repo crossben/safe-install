@@ -19,6 +19,7 @@ jobs:
         continue-on-error: true
         with:
           working-directory: testdata/action/bad
+          version: source # tests this commit; releases are covered by the default "latest"
       - name: Expect failure
         env:
           OUTCOME: ${{ steps.check.outcome }}
@@ -34,3 +35,4 @@ jobs:
       - uses: ./
         with:
           working-directory: testdata/action/clean
+          version: source
