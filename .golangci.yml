@@ -6,6 +6,11 @@ linters:
     - misspell
     - revive
     - unconvert
+  exclusions:
+    rules:
+      # Tests build fixtures by running npm and writing temp files.
+      - path: _test\.go
+        linters: [gosec]
 formatters:
   enable:
     - gofmt

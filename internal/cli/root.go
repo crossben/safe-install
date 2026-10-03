@@ -45,6 +45,10 @@ func newRootCmd() *cobra.Command {
 		Long:          "safe-install analyzes your dependency tree, installs with lifecycle scripts\ndisabled, and runs only the scripts you approved.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          installArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInstall(cmd, &g, args)
+		},
 	}
 
 	pf := root.PersistentFlags()
@@ -55,7 +59,7 @@ func newRootCmd() *cobra.Command {
 	pf.BoolVar(&g.offline, "offline", false, "use cached registry data only")
 	pf.StringVar(&g.registry, "registry", "", "registry URL (default: from project/user npm config)")
 
-	root.AddCommand(newVersionCmd())
+	root.AddCommand(newInstallCmd(&g), newVersionCmd())
 	return root
 }
 

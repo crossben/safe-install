@@ -19,9 +19,10 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintf(cmd.OutOrStdout(), "safe-install %s (%s, %s) %s/%s\n",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "safe-install %s (%s, %s) %s/%s\n",
 				version, commit, date, runtime.GOOS, runtime.GOARCH)
+			return err
 		},
 	}
 }
