@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -168,9 +167,10 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	registryFindings := map[string][]analyze.Finding{}
 	if fetcher, err := newFetcher(s.g); err == nil && len(cands) > 0 {
 		minAge, _ := parseMinAge(s.g.minAge)
-		rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, analyze.Config{
-			Now: time.Now(), MinReleaseAge: minAge, Exclude: s.pol.Excluded, RegistryURL: registryURL(s.g),
-		})
+		rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, analysisConfig(s.g, s.pol, minAge))
+		for _, w := range rep.Warnings {
+			s.w.printf("safe-install: %s\n", w)
+		}
 		for _, res := range rep.Results {
 			registryFindings[res.Package.ID] = res.Findings
 		}

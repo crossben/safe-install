@@ -36,6 +36,9 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 			}
 		}
 	}
+	for _, w := range r.Warnings {
+		ew.printf("\nwarning: %s\n", w)
+	}
 	if failed := r.Failed(); failed > 0 {
 		ew.printf("\nCould not check %d package(s):\n", failed)
 		for _, res := range r.Results {
@@ -90,8 +93,9 @@ func JSON(w io.Writer, r *analyze.Report, source string) error {
 		Worst    string        `json:"worst"`
 		Skipped  int           `json:"skipped"`
 		Failed   int           `json:"failed"`
+		Warnings []string      `json:"warnings"`
 		Packages []jsonPackage `json:"packages"`
-	}{string(r.Format), source, r.Worst().String(), r.Skipped, r.Failed(), []jsonPackage{}}
+	}{string(r.Format), source, r.Worst().String(), r.Skipped, r.Failed(), append([]string{}, r.Warnings...), []jsonPackage{}}
 	for _, res := range r.Results {
 		p := jsonPackage{
 			ID: res.Package.ID, Name: res.Package.Name, Version: res.Package.Version,

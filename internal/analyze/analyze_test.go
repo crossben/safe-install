@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/osv"
+	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 )
 
@@ -36,6 +40,7 @@ type ver struct {
 	integrity  string
 	trusted    bool // published by a trusted publisher (CI via OIDC)
 	provenance bool
+	scripts    bool // has a postinstall script
 }
 
 func doc(name string, vs ...ver) *registry.Packument {
@@ -49,6 +54,9 @@ func doc(name string, vs ...ver) *registry.Packument {
 		m.Dist.Integrity = v.integrity
 		if v.trusted {
 			m.NpmUser = registry.Person{Name: "GitHub Actions", TrustedPublisher: &registry.TrustedPublisher{ID: "github"}}
+		}
+		if v.scripts {
+			m.Scripts = map[string]string{"postinstall": "node install.js"}
 		}
 		if v.provenance {
 			m.Dist.Attestations = &registry.Attestations{Provenance: &registry.Provenance{PredicateType: "https://slsa.dev/provenance/v1"}}
@@ -188,14 +196,31 @@ func TestYarnMirrorIsTheNPMRegistry(t *testing.T) {
 	}
 }
 
+type brokenFetcher struct{}
+
+func (brokenFetcher) Packument(context.Context, string) (*registry.Packument, error) {
+	return nil, errors.New("connection refused")
+}
+
 func TestFetchErrorsAreReported(t *testing.T) {
-	r := run(t, &fakeFetcher{}, &lockfile.Package{Name: "gone", Version: "1.0.0"})
-	res := result(t, r, "gone@1.0.0")
-	if !errors.Is(res.Err, registry.ErrNotFound) {
-		t.Fatalf("err = %v", res.Err)
+	r := Analyze(context.Background(), graph(&lockfile.Package{Name: "x", Version: "1.0.0"}), brokenFetcher{}, Config{Now: now})
+	res := result(t, r, "x@1.0.0")
+	if res.Err == nil || r.Failed() != 1 {
+		t.Fatalf("err = %v, failed = %d", res.Err, r.Failed())
 	}
-	if r.Failed() != 1 {
-		t.Fatalf("Failed() = %d", r.Failed())
+}
+
+// Malicious packages are usually unpublished: a 404 is a finding, and OSV
+// must still be asked.
+func TestUnpublishedPackageStillChecked(t *testing.T) {
+	vulns := fakeOSV{{Name: "snapshot-vks", Version: "1.0.0"}: {{ID: "MAL-2025-47103"}}}
+	r := Analyze(context.Background(), graph(&lockfile.Package{Name: "snapshot-vks", Version: "1.0.0"}), &fakeFetcher{}, Config{Now: now, OSV: vulns})
+	res := result(t, r, "snapshot-vks@1.0.0")
+	if res.Err != nil || r.Failed() != 0 {
+		t.Fatalf("404 treated as a failure: %v", res.Err)
+	}
+	if !hasRule(res, "SI-VUL-001", Block) || !hasRule(res, "SI-DEP-001", Low) || res.Level != LevelBlock {
+		t.Fatalf("findings = %+v", res.Findings)
 	}
 }
 
@@ -263,5 +288,101 @@ func TestEveryRuleIsExplained(t *testing.T) {
 	}
 	if _, ok := Explain("SI-NOPE"); ok {
 		t.Error("unknown rule explained")
+	}
+}
+
+type fakeOSV map[osv.Package][]osv.Vuln
+
+func (f fakeOSV) Lookup(_ context.Context, pkgs []osv.Package) (map[osv.Package][]osv.Vuln, error) {
+	out := map[osv.Package][]osv.Vuln{}
+	for _, p := range pkgs {
+		if v, ok := f[p]; ok {
+			out[p] = v
+		}
+	}
+	return out, nil
+}
+
+type failingOSV struct{}
+
+func (failingOSV) Lookup(context.Context, []osv.Package) (map[osv.Package][]osv.Vuln, error) {
+	return nil, errors.New("osv down")
+}
+
+type fakeDownloads struct {
+	counts map[string]int
+	asked  []string
+}
+
+func (f *fakeDownloads) Weekly(_ context.Context, names []string) (map[string]int, error) {
+	f.asked = append(f.asked, names...)
+	out := map[string]int{}
+	for _, n := range names {
+		if c, ok := f.counts[n]; ok {
+			out[n] = c
+		}
+	}
+	return out, nil
+}
+
+func withScripts(v ver) ver { v.scripts = true; return v }
+
+func TestPopularityVulnRules(t *testing.T) {
+	old := ver{v: "1.0.0", age: 400 * day}
+	f := &fakeFetcher{docs: map[string]*registry.Packument{
+		"lodahs":      doc("lodahs", old),
+		"tiny-native": doc("tiny-native", withScripts(old)),
+		"busy-native": doc("busy-native", withScripts(old)),
+		"esbuild":     doc("esbuild", withScripts(old)),
+		"lodash":      doc("lodash", old),
+		"evil":        doc("evil", old),
+	}}
+	dl := &fakeDownloads{counts: map[string]int{"tiny-native": 12, "busy-native": 50000}}
+	vulns := fakeOSV{
+		{Name: "lodash", Version: "1.0.0"}: {{ID: "GHSA-a", Summary: "Prototype Pollution", Severity: "CRITICAL"}, {ID: "GHSA-b", Summary: "ReDoS", Severity: "MODERATE"}},
+		{Name: "evil", Version: "1.0.0"}:   {{ID: "MAL-2025-1", Summary: "known malicious package"}},
+	}
+	var pkgs []*lockfile.Package
+	for name := range f.docs {
+		pkgs = append(pkgs, &lockfile.Package{Name: name, Version: "1.0.0"})
+	}
+	r := Analyze(context.Background(), graph(pkgs...), f, Config{
+		Now: now, Popular: popularity.Default(), Downloads: dl, OSV: vulns,
+	})
+
+	if res := result(t, r, "lodahs@1.0.0"); !hasRule(res, "SI-POP-001", High) {
+		t.Errorf("typosquat: %+v", res.Findings)
+	}
+	if res := result(t, r, "tiny-native@1.0.0"); !hasRule(res, "SI-POP-002", Medium) {
+		t.Errorf("unpopular with scripts: %+v", res.Findings)
+	}
+	if res := result(t, r, "busy-native@1.0.0"); len(res.Findings) != 0 {
+		t.Errorf("busy-native: %+v", res.Findings)
+	}
+	if res := result(t, r, "esbuild@1.0.0"); len(res.Findings) != 0 {
+		t.Errorf("popular package with scripts: %+v", res.Findings)
+	}
+	// Only unpopular packages with install scripts are looked up.
+	sort.Strings(dl.asked)
+	if want := []string{"busy-native", "tiny-native"}; !slices.Equal(dl.asked, want) {
+		t.Errorf("downloads asked for %v, want %v", dl.asked, want)
+	}
+	res := result(t, r, "lodash@1.0.0")
+	if !hasRule(res, "SI-VUL-001", High) || !hasRule(res, "SI-VUL-001", Low) {
+		t.Errorf("advisories (critical->high, moderate->low): %+v", res.Findings)
+	}
+	if res := result(t, r, "evil@1.0.0"); !hasRule(res, "SI-VUL-001", Block) || res.Level != LevelBlock {
+		t.Errorf("malicious: %+v", res)
+	}
+}
+
+func TestOSVFailureIsAWarning(t *testing.T) {
+	f := &fakeFetcher{docs: map[string]*registry.Packument{"a": doc("a", ver{v: "1.0.0", age: 400 * day})}}
+	r := Analyze(context.Background(), graph(&lockfile.Package{Name: "a", Version: "1.0.0"}), f, Config{Now: now, OSV: failingOSV{}})
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "osv down") {
+		t.Fatalf("warnings = %v", r.Warnings)
+	}
+	if r.Failed() != 0 {
+		t.Fatal("an OSV outage must not count as unchecked packages")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,7 +111,7 @@ func TestCheckExitCodes(t *testing.T) {
 		{"old release is clean", 400 * 24 * time.Hour, true, []string{"--fail-on", "low"}, ExitOK},
 		{"min-age 0 disables the age rule", 2 * time.Hour, true, []string{"--fail-on", "low", "--min-age", "0"}, ExitOK},
 		{"min-age in days", 2 * 24 * time.Hour, true, []string{"--fail-on", "low", "--min-age", "1d"}, ExitOK},
-		{"unreachable metadata is a tool error", 0, false, nil, ExitToolError},
+		{"missing from the registry is a finding", 0, false, []string{"--fail-on", "low"}, ExitPolicyFailure},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,5 +147,74 @@ func TestParseMinAge(t *testing.T) {
 		if _, err := parseMinAge(bad); err == nil {
 			t.Errorf("parseMinAge(%q): expected error", bad)
 		}
+	}
+}
+
+func TestCheckFlagsMaliciousPackageFromOSV(t *testing.T) {
+	checkProject(t, 400*24*time.Hour, true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"results":[{"vulns":[{"id":"MAL-2026-1"}]}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("SAFE_INSTALL_OSV_URL", srv.URL)
+
+	out, err := runCLIOut(t, "check")
+	if code := exitCode(err); code != ExitPolicyFailure {
+		t.Fatalf("exit = %d (%v), want %d\n%s", code, err, ExitPolicyFailure, out)
+	}
+	if !strings.Contains(out, "known malicious package (MAL-2026-1)") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+func TestCheckOSVOutageIsAWarning(t *testing.T) {
+	checkProject(t, 400*24*time.Hour, true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	t.Setenv("SAFE_INSTALL_OSV_URL", srv.URL)
+
+	out, err := runCLIOut(t, "check")
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "known-vulnerability check skipped") {
+		t.Fatalf("no warning:\n%s", out)
+	}
+}
+
+func TestCheckSARIF(t *testing.T) {
+	checkProject(t, 2*time.Hour, true)
+	out, err := runCLIOut(t, "check", "--format", "sarif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Version string `json:"version"`
+		Runs    []struct {
+			Results []struct {
+				RuleID string `json:"ruleId"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil || doc.Version != "2.1.0" || len(doc.Runs[0].Results) != 1 || doc.Runs[0].Results[0].RuleID != "SI-REC-001" {
+		t.Fatalf("sarif: %v\n%s", err, out)
+	}
+}
+
+func TestCheckSARIFFileAlongsideText(t *testing.T) {
+	checkProject(t, 2*time.Hour, true)
+	path := filepath.Join(t.TempDir(), "out.sarif")
+	out, err := runCLIOut(t, "check", "--sarif-file", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "SI-REC-001") {
+		t.Fatalf("text report missing:\n%s", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"version": "2.1.0"`) {
+		t.Fatalf("sarif file: %v\n%s", err, data)
 	}
 }

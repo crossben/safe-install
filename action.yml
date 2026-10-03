@@ -1,0 +1,65 @@
+name: safe-install check
+description: Check a JavaScript project's dependencies for supply-chain risks (npm, pnpm, yarn, bun)
+author: crossben
+branding:
+  icon: shield
+  color: orange
+
+inputs:
+  working-directory:
+    description: Directory containing package.json and the lockfile
+    default: .
+  fail-on:
+    description: Fail when a package reaches this level (low, medium, high, block, none)
+    default: high
+  min-age:
+    description: Minimum release age, e.g. 72h or 3d; 0 disables
+    default: 72h
+  sarif:
+    description: "Upload results to GitHub code scanning (needs `security-events: write`)"
+    default: "false"
+
+outputs:
+  exit-code:
+    description: 0 clean, 1 policy failure, 3 tool error
+    value: ${{ steps.check.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    # Built from source until signed release binaries exist.
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache: false
+    - name: Build safe-install
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: go build -trimpath -o "$RUNNER_TEMP/safe-install" ./cmd/safe-install
+    - name: Check dependencies
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        MIN_AGE: ${{ inputs.min-age }}
+        SARIF: ${{ inputs.sarif }}
+      run: |
+        args=(check --fail-on "$FAIL_ON" --min-age "$MIN_AGE")
+        if [ "$SARIF" = "true" ]; then args+=(--sarif-file "$RUNNER_TEMP/safe-install.sarif"); fi
+        set +e
+        "$RUNNER_TEMP/safe-install" "${args[@]}"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+    - name: Upload to code scanning
+      if: inputs.sarif == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ runner.temp }}/safe-install.sarif
+        category: safe-install
+    - name: Result
+      shell: bash
+      env:
+        CODE: ${{ steps.check.outputs.exit-code }}
+      run: exit "$CODE"

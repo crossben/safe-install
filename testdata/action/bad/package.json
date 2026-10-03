@@ -1,0 +1,8 @@
+{
+  "name": "seeded-bad",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "lodahs": "1.0.0"
+  }
+}

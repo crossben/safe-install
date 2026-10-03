@@ -3,6 +3,7 @@ package analyze
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/osv"
+	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 )
 
@@ -82,9 +85,10 @@ type Result struct {
 
 // Report is the analysis of a whole graph.
 type Report struct {
-	Format  lockfile.Format
-	Results []Result // one per registry package, sorted by ID
-	Skipped int      // non-registry packages (git, file, ...) not checked
+	Format   lockfile.Format
+	Results  []Result // one per registry package, sorted by ID
+	Skipped  int      // non-registry packages (git, file, ...) not checked
+	Warnings []string // optional data sources that failed (OSV, download counts)
 }
 
 // Failed counts packages whose metadata could not be fetched.
@@ -114,6 +118,20 @@ type Config struct {
 	Exclude       func(name string) bool // packages exempt from SI-REC-001
 	RegistryURL   string                 // expected source of tarballs (SI-INT-002)
 	Concurrency   int                    // parallel registry fetches; default 16
+
+	Popular   *popularity.List // enables SI-POP-001 and SI-POP-002
+	Downloads DownloadSource   // weekly download counts for SI-POP-002; nil skips it
+	OSV       VulnSource       // advisories for SI-VUL-001; nil skips it
+}
+
+// VulnSource looks up advisories (osv.Client).
+type VulnSource interface {
+	Lookup(ctx context.Context, pkgs []osv.Package) (map[osv.Package][]osv.Vuln, error)
+}
+
+// DownloadSource returns weekly download counts (popularity.Downloads).
+type DownloadSource interface {
+	Weekly(ctx context.Context, names []string) (map[string]int, error)
 }
 
 // Input is what a rule sees for one package.
@@ -122,6 +140,9 @@ type Input struct {
 	Doc     *registry.Packument
 	Meta    *registry.VersionMeta // nil when the version is not in the registry
 	Config  Config
+
+	Vulns     []osv.Vuln
+	Downloads int // last week's downloads; -1 when unknown
 }
 
 // Rule checks one risk signal.
@@ -131,7 +152,8 @@ type Rule interface {
 }
 
 // Rules is the default rule set.
-var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{}}
+var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{},
+	typosquatRule{}, popularityRule{}, vulnRule{}}
 
 // Analyze fetches metadata for every registry package in g and runs the rules.
 func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Config) *Report {
@@ -149,41 +171,109 @@ func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Con
 		byName[p.Name] = append(byName[p.Name], p)
 	}
 
+	docs, errs := fetchAll(ctx, f, byName, cfg.Concurrency)
+
+	var inputs []*Input
+	for name, pkgs := range byName {
+		for _, p := range pkgs {
+			doc, err := docs[name], errs[name]
+			if errors.Is(err, registry.ErrNotFound) {
+				// Unpublished (often for being malicious): still checked.
+				doc, err = &registry.Packument{Name: name}, nil
+			}
+			if err != nil {
+				rep.Results = append(rep.Results, Result{Package: p, Err: err})
+				continue
+			}
+			in := &Input{Package: p, Doc: doc, Config: cfg, Downloads: -1}
+			if m, ok := in.Doc.Versions[p.Version]; ok {
+				in.Meta = &m
+			}
+			inputs = append(inputs, in)
+		}
+	}
+	rep.Warnings = enrich(ctx, inputs, cfg)
+	for _, in := range inputs {
+		rep.Results = append(rep.Results, check(in))
+	}
+
+	sort.Slice(rep.Results, func(i, j int) bool { return rep.Results[i].Package.ID < rep.Results[j].Package.ID })
+	return rep
+}
+
+func fetchAll(ctx context.Context, f registry.Fetcher, byName map[string][]*lockfile.Package, concurrency int) (map[string]*registry.Packument, map[string]error) {
+	docs := map[string]*registry.Packument{}
+	errs := map[string]error{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, cfg.Concurrency)
-	for name, pkgs := range byName {
+	sem := make(chan struct{}, concurrency)
+	for name := range byName {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			doc, err := f.Packument(ctx, name)
 			<-sem
-			results := make([]Result, 0, len(pkgs))
-			for _, p := range pkgs {
-				if err != nil {
-					results = append(results, Result{Package: p, Err: err})
-					continue
-				}
-				results = append(results, check(p, doc, cfg))
-			}
 			mu.Lock()
-			rep.Results = append(rep.Results, results...)
+			docs[name], errs[name] = doc, err
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
-
-	sort.Slice(rep.Results, func(i, j int) bool { return rep.Results[i].Package.ID < rep.Results[j].Package.ID })
-	return rep
+	return docs, errs
 }
 
-func check(p *lockfile.Package, doc *registry.Packument, cfg Config) Result {
-	in := &Input{Package: p, Doc: doc, Config: cfg}
-	if m, ok := doc.Versions[p.Version]; ok {
-		in.Meta = &m
+// enrich adds advisories and download counts. These sources are optional:
+// a failure becomes a warning, not an unchecked package.
+func enrich(ctx context.Context, inputs []*Input, cfg Config) []string {
+	var warnings []string
+	if cfg.OSV != nil && len(inputs) > 0 {
+		pkgs := make([]osv.Package, len(inputs))
+		for i, in := range inputs {
+			pkgs[i] = osv.Package{Name: in.Package.Name, Version: in.Package.Version}
+		}
+		vulns, err := cfg.OSV.Lookup(ctx, pkgs)
+		if err != nil {
+			warnings = append(warnings, "known-vulnerability check skipped: "+err.Error())
+		}
+		for i, in := range inputs {
+			in.Vulns = vulns[pkgs[i]]
+		}
 	}
-	res := Result{Package: p}
+	if cfg.Downloads != nil && cfg.Popular != nil {
+		// Only unpopular packages with install scripts are worth a lookup.
+		want := map[string]bool{}
+		for _, in := range inputs {
+			if in.Meta != nil && hasInstallScript(in.Meta) && !cfg.Popular.Popular(in.Package.Name) {
+				want[in.Package.Name] = true
+			}
+		}
+		if len(want) > 0 {
+			names := make([]string, 0, len(want))
+			for n := range want {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			counts, err := cfg.Downloads.Weekly(ctx, names)
+			if err != nil {
+				warnings = append(warnings, "download counts skipped: "+err.Error())
+			}
+			for _, in := range inputs {
+				if c, ok := counts[in.Package.Name]; ok {
+					in.Downloads = c
+				}
+			}
+		}
+	}
+	return warnings
+}
+
+func hasInstallScript(m *registry.VersionMeta) bool {
+	return m.Scripts["preinstall"] != "" || m.Scripts["install"] != "" || m.Scripts["postinstall"] != ""
+}
+
+func check(in *Input) Result {
+	res := Result{Package: in.Package}
 	for _, r := range Rules {
 		res.Findings = append(res.Findings, r.Check(in)...)
 	}

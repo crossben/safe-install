@@ -190,3 +190,66 @@ func humanDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
 }
+
+// SI-POP-001: name imitates a popular package.
+type typosquatRule struct{}
+
+func (typosquatRule) ID() string { return "SI-POP-001" }
+
+func (r typosquatRule) Check(in *Input) []Finding {
+	if in.Config.Popular == nil {
+		return nil
+	}
+	if target, ok := in.Config.Popular.Typosquat(in.Package.Name); ok {
+		return []Finding{{r.ID(), High, fmt.Sprintf("name looks like the popular package %q", target)}}
+	}
+	return nil
+}
+
+// unpopular is the weekly download count below which SI-POP-002 applies.
+const unpopular = 1000
+
+// SI-POP-002: rarely used package that runs install scripts.
+type popularityRule struct{}
+
+func (popularityRule) ID() string { return "SI-POP-002" }
+
+func (r popularityRule) Check(in *Input) []Finding {
+	if in.Meta == nil || in.Downloads < 0 || in.Downloads >= unpopular || !hasInstallScript(in.Meta) {
+		return nil
+	}
+	return []Finding{{r.ID(), Medium, fmt.Sprintf("only %d downloads last week, and it runs install scripts", in.Downloads)}}
+}
+
+// SI-VUL-001: known advisories. Malicious-package entries block; ordinary
+// vulnerabilities count one level lower than their advisory severity, since
+// safe-install targets supply-chain attacks and `npm audit` covers the rest.
+type vulnRule struct{}
+
+func (vulnRule) ID() string { return "SI-VUL-001" }
+
+func (r vulnRule) Check(in *Input) []Finding {
+	var out []Finding
+	for _, v := range in.Vulns {
+		if v.Malicious() {
+			out = append(out, Finding{r.ID(), Block, fmt.Sprintf("known malicious package (%s)", v.ID)})
+			continue
+		}
+		sev := Low
+		switch v.Severity {
+		case "CRITICAL":
+			sev = High
+		case "HIGH":
+			sev = Medium
+		}
+		msg := v.ID
+		if v.Summary != "" {
+			msg += ": " + v.Summary
+		}
+		if v.Severity != "" {
+			msg += " (" + strings.ToLower(v.Severity) + ")"
+		}
+		out = append(out, Finding{r.ID(), sev, msg})
+	}
+	return out
+}

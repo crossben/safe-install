@@ -93,8 +93,27 @@ eval "$(safe-install shell-init bash)"   # add to ~/.bashrc or ~/.zshrc
 ```sh
 safe-install check                  # score every package in the lockfile
 safe-install check --fail-on medium # exit 1 at medium risk or worse
-safe-install check --format json
+safe-install check --format json    # or sarif; --sarif-file x.sarif writes SARIF alongside text
 ```
+
+Besides the registry checks, `check` flags names that imitate popular packages, rarely
+downloaded packages that run install scripts, and anything in the [OSV](https://osv.dev)
+database. OSV's malicious-package entries (`MAL-…`) **block**; ordinary vulnerabilities
+count one level below their advisory severity (`npm audit` covers those in depth).
+`safe-install explain` lists every rule.
+
+## GitHub Action
+
+```yaml
+- uses: crossben/safe-install@main
+  with:
+    working-directory: .   # where package.json and the lockfile are
+    fail-on: high          # low, medium, high, block, none
+    sarif: true            # upload to code scanning (needs security-events: write)
+```
+
+The action builds safe-install from source for now; it fails the job when a package
+reaches `fail-on`.
 
 New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
 passes this to the package manager so fresh releases are not picked up, and `check`
@@ -102,8 +121,10 @@ flags any already in the lockfile.
 
 ## Privacy
 
-No telemetry. `safe-install` only talks to your configured package registry and, for
-advisories, the OSV API.
+No telemetry. `safe-install` talks to your configured package registry, the
+[OSV API](https://osv.dev) (package names and versions, for advisories) and npm's download
+counts API (only for rarely used packages with install scripts). `--offline` uses cached
+registry data only and skips both.
 
 ## Security
 
@@ -112,6 +133,8 @@ Found a bypass? Please report it privately, see [SECURITY.md](SECURITY.md).
 ## Acknowledgements
 
 The release-age gate is inspired by [safe-npm](https://github.com/kevinslin/safe-npm).
+The popular-package list comes from [npm-high-impact](https://github.com/wooorm/npm-high-impact)
+(MIT, Titus Wormer); refresh it with `scripts/update-popular.sh`.
 
 ## License
 

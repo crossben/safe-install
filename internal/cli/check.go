@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,14 +14,16 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/osv"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 	"github.com/crossben/safe-install/internal/report"
 )
 
 func newCheckCmd(g *globalFlags) *cobra.Command {
-	var failOn string
+	var failOn, sarifFile string
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Analyze the dependency tree without installing",
@@ -39,14 +42,15 @@ func newCheckCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd, g, pol, threshold)
+			return runCheck(cmd, g, pol, threshold, sarifFile)
 		},
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 when a package reaches this level: low, medium, high, block, none")
+	cmd.Flags().StringVar(&sarifFile, "sarif-file", "", "also write a SARIF report to this file (for code scanning)")
 	return cmd
 }
 
-func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level) error {
+func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level, sarifFile string) error {
 	minAge, err := parseMinAge(g.minAge)
 	if err != nil {
 		return err
@@ -71,14 +75,16 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		return err
 	}
 
-	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analyze.Config{
-		Now:           time.Now(),
-		MinReleaseAge: minAge,
-		Exclude:       pol.Excluded,
-		RegistryURL:   registryURL(g),
-	})
+	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analysisConfig(g, pol, minAge))
 
 	source := filepath.Base(path)
+	sarif := func(w io.Writer) error {
+		data, err := os.ReadFile(path) // #nosec G304 -- the project's lockfile
+		if err != nil {
+			return err
+		}
+		return report.SARIF(w, rep, repoRelative(path), data, version)
+	}
 	out := cmd.OutOrStdout()
 	switch g.format {
 	case "text":
@@ -86,12 +92,22 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	case "json":
 		err = report.JSON(out, rep, source)
 	case "sarif":
-		return errors.New("--format sarif is not available yet")
+		err = sarif(out)
 	default:
-		return fmt.Errorf("unknown --format %q (text, json)", g.format)
+		return fmt.Errorf("unknown --format %q (text, json, sarif)", g.format)
 	}
 	if err != nil {
 		return err
+	}
+	if sarifFile != "" {
+		f, err := os.Create(sarifFile) // #nosec G304 -- path given by the user
+		if err != nil {
+			return err
+		}
+		werr := sarif(f)
+		if err := errors.Join(werr, f.Close()); err != nil {
+			return fmt.Errorf("writing %s: %w", sarifFile, err)
+		}
 	}
 
 	if n := rep.Failed(); n > 0 {
@@ -101,6 +117,55 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		return &exitError{ExitPolicyFailure, fmt.Errorf("found %s-risk packages (--fail-on %s)", rep.Worst(), failOn)}
 	}
 	return nil
+}
+
+// analysisConfig builds the analysis settings, including the optional data
+// sources: OSV advisories and npm download counts. Offline mode and registry
+// fixtures turn them off unless their URL is set explicitly (tests).
+func analysisConfig(g *globalFlags, pol *policy.Policy, minAge time.Duration) analyze.Config {
+	cfg := analyze.Config{
+		Now:           time.Now(),
+		MinReleaseAge: minAge,
+		Exclude:       pol.Excluded,
+		RegistryURL:   registryURL(g),
+		Popular:       popularity.Default(),
+	}
+	if u, ok := sourceURL(g, "SAFE_INSTALL_OSV_URL", osv.DefaultURL); ok {
+		cfg.OSV = &osv.Client{BaseURL: u}
+	}
+	if u, ok := sourceURL(g, "SAFE_INSTALL_DOWNLOADS_URL", popularity.DefaultDownloadsURL); ok {
+		cfg.Downloads = &popularity.Downloads{BaseURL: u}
+	}
+	return cfg
+}
+
+func sourceURL(g *globalFlags, env, def string) (string, bool) {
+	if u := os.Getenv(env); u != "" {
+		return u, u != "off"
+	}
+	if g.offline || os.Getenv("SAFE_INSTALL_REGISTRY_FIXTURES") != "" {
+		return "", false
+	}
+	return def, true
+}
+
+// repoRelative returns path relative to the enclosing git repository (as
+// code scanning expects), or just its base name outside one.
+func repoRelative(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Base(path)
+	}
+	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			if rel, err := filepath.Rel(dir, abs); err == nil {
+				return filepath.ToSlash(rel)
+			}
+		}
+		if filepath.Dir(dir) == dir {
+			return filepath.Base(path)
+		}
+	}
 }
 
 func newFetcher(g *globalFlags) (registry.Fetcher, error) {

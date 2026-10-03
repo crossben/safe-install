@@ -1,0 +1,36 @@
+name: action
+
+# The GitHub Action must fail on a seeded malicious dependency and pass on a clean project.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  seeded-bad-dependency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        uses: ./
+        continue-on-error: true
+        with:
+          working-directory: testdata/action/bad
+      - name: Expect failure
+        env:
+          OUTCOME: ${{ steps.check.outcome }}
+          CODE: ${{ steps.check.outputs.exit-code }}
+        run: |
+          echo "outcome=$OUTCOME exit-code=$CODE"
+          test "$OUTCOME" = failure && test "$CODE" = 1
+
+  clean-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          working-directory: testdata/action/clean
