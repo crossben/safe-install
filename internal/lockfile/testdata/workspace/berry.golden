@@ -1,0 +1,10 @@
+format: yarn-berry
+is-number@7.0.0 direct dev
+js-tokens@4.0.0
+left-pad@1.3.0 direct
+loose-envify@1.4.0
+  -> js-tokens@4.0.0
+ms@2.0.0 direct
+react@18.3.1 direct
+  -> loose-envify@1.4.0
+use-sync-external-store@1.2.0 direct
