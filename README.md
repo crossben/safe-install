@@ -30,6 +30,24 @@ go build -o bin/safe-install ./cmd/safe-install
 ./bin/safe-install version
 ```
 
+## Install
+
+```sh
+safe-install                 # or: safe-install install
+safe-install install --yes   # approve every script below high risk
+safe-install install -- --omit=dev   # flags after -- go to the package manager
+```
+
+Dependencies are installed with every lifecycle script disabled. safe-install then lists
+the packages that want to run `preinstall` / `install` / `postinstall` scripts, flags
+risky ones (download-and-execute, `eval` / encoded blobs, credential access, plus the
+registry checks below), and runs only the ones you approve, dependencies first. Without a
+terminal (CI) nothing is approved; `--ci` also exits 1 when a high-risk script is present.
+Your project's own lifecycle scripts are never run for you.
+
+Running approved scripts uses `npm run` inside each package's directory, so npm must be
+on `PATH` (it ships with Node).
+
 ## Check without installing
 
 ```sh

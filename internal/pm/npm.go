@@ -3,7 +3,6 @@ package pm
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"time"
 )
@@ -13,7 +12,11 @@ type npmAdapter struct{}
 func (npmAdapter) Name() Kind { return NPM }
 
 func (a npmAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := a.installCmd(ctx, dir, opts.Args, opts.Before)
+	var before time.Time
+	if opts.MinAge > 0 {
+		before = time.Now().Add(-opts.MinAge)
+	}
+	cmd, err := a.installCmd(ctx, dir, opts.Args, before)
 	if err != nil {
 		return err
 	}
@@ -22,6 +25,10 @@ func (a npmAdapter) InstallNoScripts(ctx context.Context, dir string, opts Insta
 		return fmt.Errorf("npm install: %w", err)
 	}
 	return nil
+}
+
+func (npmAdapter) RunScripts(ctx context.Context, _ string, targets []Target, opts RunOptions) error {
+	return runInPackageDirs(ctx, targets, opts)
 }
 
 // installCmd builds the npm command. before maps to npm's --before: new
@@ -38,8 +45,7 @@ func (npmAdapter) installCmd(ctx context.Context, dir string, args []string, bef
 		argv = append(argv, "--before", before.UTC().Format(time.RFC3339))
 	}
 	argv = append(argv, "--ignore-scripts")
-	cmd := exec.CommandContext(ctx, bin, argv...) // #nosec G204 -- bin from LookPath, args are the user's own
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "npm_config_ignore_scripts=true")
+	cmd := newCmd(ctx, dir, bin, argv)
+	cmd.Env = append(cmd.Env, "npm_config_ignore_scripts=true")
 	return cmd, nil
 }

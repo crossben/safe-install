@@ -20,8 +20,18 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # Package managers for the end-to-end tests (yarn comes through corepack).
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: oven-sh/setup-bun@v2
       - run: go vet ./...
       - run: go test -race ./...
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
       - run: go build ./cmd/safe-install
 
   lint:

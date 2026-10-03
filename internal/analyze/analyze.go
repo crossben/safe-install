@@ -141,7 +141,7 @@ func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Con
 
 	byName := map[string][]*lockfile.Package{}
 	for _, p := range g.Sorted() {
-		if !isRegistryVersion(p.Version) {
+		if !fromRegistry(p) {
 			rep.Skipped++
 			continue
 		}
@@ -186,28 +186,42 @@ func check(p *lockfile.Package, doc *registry.Packument, cfg Config) Result {
 	for _, r := range Rules {
 		res.Findings = append(res.Findings, r.Check(in)...)
 	}
-	for _, f := range res.Findings {
-		res.Score += int(f.Severity)
-		if f.Severity == Block {
-			res.Level = LevelBlock
-		}
-	}
-	res.Score = min(res.Score, 100)
-	if res.Level != LevelBlock {
-		switch {
-		case res.Score >= 60:
-			res.Level = LevelHigh
-		case res.Score >= 30:
-			res.Level = LevelMedium
-		case res.Score > 0:
-			res.Level = LevelLow
-		}
-	}
+	res.Score, res.Level = Score(res.Findings)
 	return res
 }
 
-// isRegistryVersion reports whether v is a plain registry version rather than
-// a git, file, link or tarball reference.
-func isRegistryVersion(v string) bool {
-	return v != "" && v[0] >= '0' && v[0] <= '9' && !strings.ContainsAny(v, ":/#")
+// Score sums finding weights (capped at 100) and derives the level: block if
+// any finding blocks, else by score.
+func Score(findings []Finding) (int, Level) {
+	score, level := 0, LevelNone
+	for _, f := range findings {
+		score += int(f.Severity)
+		if f.Severity == Block {
+			level = LevelBlock
+		}
+	}
+	score = min(score, 100)
+	if level == LevelBlock {
+		return score, level
+	}
+	switch {
+	case score >= 60:
+		level = LevelHigh
+	case score >= 30:
+		level = LevelMedium
+	case score > 0:
+		level = LevelLow
+	}
+	return score, level
+}
+
+// fromRegistry reports whether p came from a registry rather than a git,
+// file, link or tarball reference.
+func fromRegistry(p *lockfile.Package) bool {
+	v := p.Version
+	if v == "" || v[0] < '0' || v[0] > '9' || strings.ContainsAny(v, ":/#") {
+		return false
+	}
+	r := p.Resolved
+	return r == "" || strings.HasPrefix(r, "https://") || strings.HasPrefix(r, "http://")
 }

@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/crossben/safe-install/internal/pm"
@@ -27,17 +25,6 @@ func TestInstallWithoutPackageJSON(t *testing.T) {
 		if _, err := runCLI(t, args...); !errors.Is(err, pm.ErrNoPackageJSON) {
 			t.Fatalf("%v: got %v, want ErrNoPackageJSON", args, err)
 		}
-	}
-}
-
-func TestInstallUnsupportedPM(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(dir)
-	if _, err := runCLI(t, "install", "--pm", "pnpm"); !errors.Is(err, pm.ErrNotYetSupported) {
-		t.Fatalf("got %v, want ErrNotYetSupported", err)
 	}
 }
 

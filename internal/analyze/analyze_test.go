@@ -201,8 +201,12 @@ func TestFetchErrorsAreReported(t *testing.T) {
 
 func TestNonRegistryPackagesAreSkipped(t *testing.T) {
 	f := &fakeFetcher{}
-	r := run(t, f, &lockfile.Package{Name: "local", Version: "file:../local"})
-	if f.calls.Load() != 0 || len(r.Results) != 0 || r.Skipped != 1 {
+	r := run(t, f,
+		&lockfile.Package{Name: "local", Version: "file:../local"},
+		&lockfile.Package{Name: "tarball", Version: "1.0.0", Resolved: "file:tarball-1.0.0.tgz"},
+		&lockfile.Package{Name: "gitdep", Version: "1.0.0", Resolved: "git+ssh://git@github.com/a/b.git#abc"},
+	)
+	if f.calls.Load() != 0 || len(r.Results) != 0 || r.Skipped != 3 {
 		t.Fatalf("calls=%d results=%d skipped=%d", f.calls.Load(), len(r.Results), r.Skipped)
 	}
 }
