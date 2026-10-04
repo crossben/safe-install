@@ -17,7 +17,17 @@ approved. Linux, macOS and Windows; single static binary.
 
 ## Supported package managers
 
-npm · pnpm · Yarn classic · Yarn berry · bun
+| Package manager | Lockfile | Install with scripts off | Approved scripts run with |
+| --- | --- | --- | --- |
+| npm | `package-lock.json` (v2/v3) | `npm install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
+| pnpm | `pnpm-lock.yaml` (v6, v9) | `pnpm install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
+| Yarn classic | `yarn.lock` (v1) | `yarn install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
+| Yarn berry | `yarn.lock` (v2+) | `yarn install --mode=skip-build` | `npm run <stage> --ignore-scripts` in `.yarn/unplugged`, with `.pnp.cjs` preloaded |
+| bun | `bun.lock` | `bun install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
+
+The package manager is detected from the lockfile, then the `packageManager` field in
+`package.json` (`--pm` overrides both). When `packageManager` pins pnpm or Yarn,
+safe-install runs it through corepack so you get exactly that version.
 
 ## Get it
 
@@ -140,6 +150,14 @@ safe-install check --fail-on medium # exit 1 at medium risk or worse
 safe-install check --format json    # or sarif; --sarif-file x.sarif writes SARIF alongside text
 ```
 
+New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
+passes this to the package manager so fresh releases are not picked up, and `check`
+flags any already in the lockfile.
+
+Exit codes: `0` ok · `1` a package reached `--fail-on` (or, with `--ci`, an unapproved
+high-risk script or high-risk monitor finding) · `3` tool error, such as registry
+metadata that could not be fetched.
+
 Besides the registry checks, `check` flags names that imitate popular packages, rarely
 downloaded packages that run install scripts, and anything in the [OSV](https://osv.dev)
 database. OSV's malicious-package entries (`MAL-…`) **block**; ordinary vulnerabilities
@@ -159,10 +177,6 @@ count one level below their advisory severity (`npm audit` covers those in depth
 The action downloads the release binary for the runner (checksum-verified; `version:`
 picks a release, `source` builds from the action's checkout) and fails the job when a
 package reaches `fail-on`.
-
-New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
-passes this to the package manager so fresh releases are not picked up, and `check`
-flags any already in the lockfile.
 
 ## Privacy
 
