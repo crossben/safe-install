@@ -44,13 +44,7 @@ func (c *Candidate) Stages() []string {
 // lists graph packages not found on disk (not installed for this platform,
 // or not unpacked at all with Plug'n'Play).
 func Discover(dir string, g *lockfile.Graph) (cands []*Candidate, missing []string) {
-	installed := map[string]string{} // ID -> dir
-	indexNodeModules(filepath.Join(dir, "node_modules"), installed, 0)
-	// Yarn berry unpacks packages with build scripts here, even with Plug'n'Play.
-	unplugged, _ := filepath.Glob(filepath.Join(dir, ".yarn", "unplugged", "*", "node_modules"))
-	for _, nm := range unplugged {
-		indexNodeModules(nm, installed, 0)
-	}
+	installed := Installed(dir)
 
 	for _, p := range g.Sorted() {
 		pdir, ok := installed[p.ID]
@@ -63,6 +57,20 @@ func Discover(dir string, g *lockfile.Graph) (cands []*Candidate, missing []stri
 		}
 	}
 	return cands, missing
+}
+
+// Installed maps name@version to the directory of every package unpacked in
+// dir: node_modules (including pnpm's .pnpm store) and Yarn berry's unplugged
+// packages. Symlinks (workspaces, pnpm links) are not followed.
+func Installed(dir string) map[string]string {
+	installed := map[string]string{}
+	indexNodeModules(filepath.Join(dir, "node_modules"), installed, 0)
+	// Yarn berry unpacks packages with build scripts here, even with Plug'n'Play.
+	unplugged, _ := filepath.Glob(filepath.Join(dir, ".yarn", "unplugged", "*", "node_modules"))
+	for _, nm := range unplugged {
+		indexNodeModules(nm, installed, 0)
+	}
+	return installed
 }
 
 // FromManifest builds a candidate from the package.json in pdir, or returns

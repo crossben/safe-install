@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/codescan"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/pm"
@@ -74,7 +76,9 @@ type session struct {
 	pol     *policy.Policy
 	w       *lineWriter
 	monitor monitor.Mode
-	flagged bool // the monitor saw high-risk behavior
+	flagged bool                         // the monitor saw high-risk behavior
+	code    map[string][]analyze.Finding // code-scan findings by package ID
+	graph   *lockfile.Graph
 }
 
 func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
@@ -138,12 +142,16 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 		return err
 	}
 	summarize(w, cands, approved)
+	codeHigh := s.codeReport(cands)
 	projectScriptsNote(w, s.dir, s.det.Kind)
 	if w.err != nil {
 		return w.err
 	}
 	if g.ci && s.flagged {
 		return &exitError{ExitPolicyFailure, errors.New("the runtime monitor saw high-risk behavior")}
+	}
+	if g.ci && codeHigh != "" {
+		return &exitError{ExitPolicyFailure, fmt.Errorf("%s contains high-risk code", codeHigh)}
 	}
 	if g.ci {
 		ran := map[*scripts.Candidate]bool{}
@@ -166,10 +174,24 @@ func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	s.graph = graph
+	s.code = codeFindings(scripts.Installed(s.dir), graph)
 	cands, _ := scripts.Discover(s.dir, graph)
 	cands = scripts.Order(cands, graph)
 	s.assess(cands, graph.Format)
 	return cands, graph, nil
+}
+
+// codeFindings scans the code of every installed package (ID -> dir) that
+// the lockfile knows.
+func codeFindings(installed map[string]string, graph *lockfile.Graph) map[string][]analyze.Finding {
+	var targets []codescan.Target
+	for id, pdir := range installed {
+		if p, ok := graph.Packages[id]; ok {
+			targets = append(targets, codescan.Target{ID: id, Integrity: p.Integrity, Dir: pdir})
+		}
+	}
+	return (&codescan.Scanner{CacheDir: codescan.DefaultCacheDir()}).ScanAll(targets)
 }
 
 // assess scans each candidate's scripts, adds the registry rules and checks
@@ -192,6 +214,7 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	}
 	for _, c := range cands {
 		c.Findings = append(scripts.Scan(c), scriptRelevant(registryFindings[c.Package.ID])...)
+		c.Findings = append(c.Findings, s.code[c.Package.ID]...)
 		state, f := scripts.ApprovalState(c, s.pol.AllowScripts)
 		c.State = state
 		if f != nil {
@@ -381,6 +404,41 @@ func summarize(w *lineWriter, cands, approved []*scripts.Candidate) {
 	if len(skipped) > 0 {
 		w.printf("\nSkipped packages may not work until their scripts run. Review and run them with `safe-install approve <package>`.\n")
 	}
+}
+
+// codeReport prints code findings of packages without install scripts (those
+// with scripts already showed theirs) and returns the first package with a
+// high-risk finding, or "".
+func (s *session) codeReport(cands []*scripts.Candidate) string {
+	inCands := map[string]bool{}
+	for _, c := range cands {
+		inCands[c.Package.ID] = true
+	}
+	var ids []string
+	firstHigh := ""
+	for id, fs := range s.code {
+		if _, level := analyze.Score(fs); level >= analyze.LevelHigh && (firstHigh == "" || id < firstHigh) {
+			firstHigh = id
+		}
+		if !inCands[id] {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return firstHigh
+	}
+	sort.Strings(ids)
+	w := s.w
+	w.printf("\nCode findings (code that runs when the package is imported):\n")
+	for _, id := range ids {
+		_, level := analyze.Score(s.code[id])
+		w.printf("\n%s  risk: %s\n", id, strings.ToUpper(level.String()))
+		for _, f := range s.code[id] {
+			w.printf("  ! %s  %s\n", f.Rule, f.Message)
+		}
+	}
+	w.printf("\nThis code is installed and runs when your app imports it. Remove the package or pin another version; `safe-install why <package>` shows what pulls it in.\n")
+	return firstHigh
 }
 
 // projectScriptsNote reminds that the project's own lifecycle scripts were not run.

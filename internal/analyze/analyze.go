@@ -85,11 +85,13 @@ type Result struct {
 
 // Report is the analysis of a whole graph.
 type Report struct {
-	Format   lockfile.Format
-	Results  []Result // one per registry package, sorted by ID
-	Skipped  int      // non-registry packages (git, file, ...) not checked
-	Warnings []string // optional data sources that failed (OSV, download counts)
-	Base     string   // set when only packages changed since this base were checked
+	Format  lockfile.Format
+	Results []Result // one per registry package, sorted by ID
+	Skipped int      // packages not checked (see SkippedWhy)
+	// SkippedWhy explains Skipped; "" means "not from a registry" (git, file, …).
+	SkippedWhy string
+	Warnings   []string // optional data sources that failed (OSV, download counts)
+	Base       string   // set when only packages changed since this base were checked
 }
 
 // Failed counts packages whose metadata could not be fetched.

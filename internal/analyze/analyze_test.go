@@ -273,7 +273,8 @@ func TestReleaseAgeExclude(t *testing.T) {
 }
 
 func TestEveryRuleIsExplained(t *testing.T) {
-	ids := []string{"SI-SCR-001", "SI-SCR-002", "SI-SCR-003", "SI-SCR-004", "SI-SCR-005"}
+	ids := []string{"SI-SCR-001", "SI-SCR-002", "SI-SCR-003", "SI-SCR-004", "SI-SCR-005",
+		"SI-CODE-001", "SI-CODE-002", "SI-CODE-003"}
 	for _, r := range Rules {
 		ids = append(ids, r.ID())
 	}

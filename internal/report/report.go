@@ -19,7 +19,11 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 		ew.printf("Analyzed %d packages from %s (%s)", len(r.Results), source, r.Format)
 	}
 	if r.Skipped > 0 {
-		ew.printf(", %d skipped (not from a registry)", r.Skipped)
+		why := r.SkippedWhy
+		if why == "" {
+			why = "not from a registry"
+		}
+		ew.printf(", %d skipped (%s)", r.Skipped, why)
 	}
 	ew.printf("\n")
 

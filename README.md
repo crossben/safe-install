@@ -89,6 +89,17 @@ Your project's own lifecycle scripts are never run for you.
 Running approved scripts uses `npm run` inside each package's directory, so npm must be
 on `PATH` (it ships with Node).
 
+## Code scanning
+
+Install scripts are not the only way in: code can also run when your app imports a
+package. Every install (and `safe-install scan`) also scans the JavaScript of each
+installed package for three shapes, each a combination rather than a single keyword:
+code that **downloads and executes** (`SI-CODE-001`), code that **reads credentials next to
+a network send** (`SI-CODE-002`) and **obfuscated** code (`SI-CODE-003`). Results are cached
+per package version, so each version is scanned once. A high finding fails `--ci`; a
+script package with code findings is not approved by `--yes`. Files over 2 MB (bundles)
+are not scanned.
+
 ## Runtime monitor (Linux)
 
 ```sh
@@ -132,6 +143,7 @@ safe-install approve esbuild      # approve and run now (--revoke, --global, --n
 safe-install add left-pad         # add packages through the same review
 safe-install explain SI-SCR-002   # what a rule means and what to do
 safe-install why ms               # the dependency chains that bring a package in
+safe-install scan                 # scan installed packages' code (also part of every install)
 ```
 
 `minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
