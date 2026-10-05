@@ -73,30 +73,48 @@ func (s *Scanner) ScanAll(targets []Target) map[string][]analyze.Finding {
 }
 
 func (s *Scanner) scan(t Target) []analyze.Finding {
-	path := s.cachePath(t)
-	if path != "" {
-		if data, err := os.ReadFile(path); err == nil { // #nosec G304 -- our cache file
-			var cs []cached
-			if json.Unmarshal(data, &cs) == nil {
-				out := make([]analyze.Finding, 0, len(cs))
-				for _, c := range cs {
-					out = append(out, analyze.Finding{Rule: c.Rule, Severity: analyze.Severity(c.Severity), Message: c.Message})
-				}
-				return out
-			}
-		}
+	if fs, ok := s.Lookup(t); ok {
+		return fs
 	}
 	fs := Package(t.Dir)
-	if path != "" {
-		cs := make([]cached, 0, len(fs))
-		for _, f := range fs {
-			cs = append(cs, cached{f.Rule, int(f.Severity), f.Message})
-		}
-		if data, err := json.Marshal(cs); err == nil && os.MkdirAll(filepath.Dir(path), 0o750) == nil {
-			_ = os.WriteFile(path, data, 0o600) // best effort
-		}
-	}
+	s.Store(t, fs)
 	return fs
+}
+
+// Lookup returns cached findings for t (ID and Integrity; Dir is ignored).
+func (s *Scanner) Lookup(t Target) ([]analyze.Finding, bool) {
+	path := s.cachePath(t)
+	if path == "" {
+		return nil, false
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- our cache file
+	if err != nil {
+		return nil, false
+	}
+	var cs []cached
+	if json.Unmarshal(data, &cs) != nil {
+		return nil, false
+	}
+	out := make([]analyze.Finding, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, analyze.Finding{Rule: c.Rule, Severity: analyze.Severity(c.Severity), Message: c.Message})
+	}
+	return out, true
+}
+
+// Store caches findings for t (best effort; no-op without integrity).
+func (s *Scanner) Store(t Target, fs []analyze.Finding) {
+	path := s.cachePath(t)
+	if path == "" {
+		return
+	}
+	cs := make([]cached, 0, len(fs))
+	for _, f := range fs {
+		cs = append(cs, cached{f.Rule, int(f.Severity), f.Message})
+	}
+	if data, err := json.Marshal(cs); err == nil && os.MkdirAll(filepath.Dir(path), 0o750) == nil {
+		_ = os.WriteFile(path, data, 0o600)
+	}
 }
 
 func (s *Scanner) cachePath(t Target) string {

@@ -8,11 +8,14 @@
 package codescan
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -152,14 +155,64 @@ func readCapped(fsys fs.FS, path string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, maxFileBytes))
 }
 
+// isCode reports whether a file name is JavaScript the scanner reads.
+func isCode(name string) bool {
+	switch path.Ext(name) {
+	case ".js", ".cjs", ".mjs":
+		return true
+	}
+	return false
+}
+
+// collector groups hits into one finding per rule, naming the first file.
+type collector struct {
+	byRule map[string]*agg
+	total  int64
+}
+
+type agg struct {
+	sev   analyze.Severity
+	files map[string]string // file -> what it does
+}
+
+// add scans one file; it reports false once the package's byte budget is spent.
+func (c *collector) add(name string, data []byte) bool {
+	if c.total += int64(len(data)); c.total > maxPackageBytes {
+		return false
+	}
+	for _, h := range scanFile(string(data)) {
+		a := c.byRule[h.rule]
+		if a == nil {
+			a = &agg{sev: h.sev, files: map[string]string{}}
+			c.byRule[h.rule] = a
+		}
+		a.files[name] = h.what
+	}
+	return true
+}
+
+func (c *collector) findings() []analyze.Finding {
+	var out []analyze.Finding
+	for rule, a := range c.byRule {
+		files := make([]string, 0, len(a.files))
+		for f := range a.files {
+			files = append(files, f)
+		}
+		sort.Strings(files)
+		msg := fmt.Sprintf("%s %s", files[0], a.files[files[0]])
+		if n := len(files) - 1; n > 0 {
+			msg += fmt.Sprintf(" (and %d more file(s))", n)
+		}
+		out = append(out, analyze.Finding{Rule: rule, Severity: a.sev, Message: msg})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
+	return out
+}
+
 // Package scans the JavaScript files of the package installed in dir (not
 // its nested node_modules) and returns one finding per rule triggered.
 func Package(dir string) []analyze.Finding {
-	type agg struct {
-		h     hit
-		files []string
-	}
-	byRule := map[string]*agg{}
+	c := &collector{byRule: map[string]*agg{}}
 	// Every read goes through os.Root: nothing outside dir can be opened,
 	// whatever symlinks the package ships.
 	root, err := os.OpenRoot(dir)
@@ -168,53 +221,77 @@ func Package(dir string) []analyze.Finding {
 	}
 	defer func() { _ = root.Close() }()
 	fsys := root.FS()
-	var total int64
-	_ = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != "." && (d.Name() == "node_modules" || d.Name() == ".git") {
+			if p != "." && (d.Name() == "node_modules" || d.Name() == ".git") {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		switch filepath.Ext(path) {
-		case ".js", ".cjs", ".mjs":
-		default:
+		if !isCode(p) {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
 			return nil // symlinks, devices, bundles
 		}
-		if total += info.Size(); total > maxPackageBytes {
-			return fs.SkipAll
-		}
-		data, err := readCapped(fsys, path)
+		data, err := readCapped(fsys, p)
 		if err != nil {
 			return nil
 		}
-		for _, h := range scanFile(string(data)) {
-			a := byRule[h.rule]
-			if a == nil {
-				a = &agg{h: h}
-				byRule[h.rule] = a
-			}
-			a.files = append(a.files, path)
+		if !c.add(p, data) {
+			return fs.SkipAll
 		}
 		return nil
 	})
+	return c.findings()
+}
 
-	var out []analyze.Finding
-	for _, a := range byRule {
-		sort.Strings(a.files)
-		msg := fmt.Sprintf("%s %s", a.files[0], a.h.what)
-		if n := len(a.files) - 1; n > 0 {
-			msg += fmt.Sprintf(" (and %d more file(s))", n)
-		}
-		out = append(out, analyze.Finding{Rule: a.h.rule, Severity: a.h.sev, Message: msg})
+// maxTarEntries bounds the archive entries read from one tarball.
+const maxTarEntries = 50_000
+
+// Tarball scans a package tarball (.tgz, as the registry serves it) in
+// memory: nothing is extracted. Paths are taken relative to the archive's
+// top directory ("package/"); absolute or escaping paths, links and
+// non-regular entries are skipped.
+func Tarball(r io.Reader) ([]analyze.Finding, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("reading tarball: %w", err)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
-	return out
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(gz)
+	c := &collector{byRule: map[string]*agg{}}
+	for n := 0; n < maxTarEntries; n++ {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tarball: %w", err)
+		}
+		if h.Typeflag != tar.TypeReg || h.Size > maxFileBytes {
+			continue
+		}
+		name := path.Clean(strings.ReplaceAll(h.Name, "\\", "/"))
+		if path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			continue
+		}
+		// Drop the top directory (usually "package/").
+		_, rel, ok := strings.Cut(name, "/")
+		if !ok || !isCode(rel) || strings.Contains("/"+rel+"/", "/node_modules/") {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxFileBytes))
+		if err != nil {
+			return nil, fmt.Errorf("reading tarball: %w", err)
+		}
+		if !c.add(rel, data) {
+			break
+		}
+	}
+	return c.findings(), nil
 }

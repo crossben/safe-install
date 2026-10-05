@@ -23,6 +23,11 @@ inputs:
       Which packages to check: "auto" (on pull requests, only packages new or changed
       versus the base branch; otherwise all), "none" (all), or a git ref / old lockfile
     default: auto
+  deep:
+    description: >-
+      Also download and scan the code of the checked packages: "auto" (when diff
+      applies, so only the PR's new or changed packages), "true" or "false"
+    default: auto
   version:
     description: Release to use (latest, or a tag like v0.1.0), or "source" to build from this action's checkout
     default: latest
@@ -86,6 +91,7 @@ runs:
         MIN_AGE: ${{ inputs.min-age }}
         SARIF: ${{ inputs.sarif }}
         DIFF: ${{ inputs.diff }}
+        DEEP: ${{ inputs.deep }}
       run: |
         args=(check --fail-on "$FAIL_ON" --min-age "$MIN_AGE")
         if [ "$SARIF" = "true" ]; then args+=(--sarif-file "$RUNNER_TEMP/safe-install.sarif"); fi
@@ -102,6 +108,7 @@ runs:
           esac
         fi
         if [ "$DIFF" != none ]; then args+=(--diff "$DIFF"); fi
+        if [ "$DEEP" = true ] || { [ "$DEEP" = auto ] && [ "$DIFF" != none ]; }; then args+=(--deep); fi
         set +e
         "$RUNNER_TEMP/safe-install" "${args[@]}"
         code=$?

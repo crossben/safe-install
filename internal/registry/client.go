@@ -43,6 +43,8 @@ type Client struct {
 	HTTP     *http.Client  // default: 30s timeout
 	CacheDir string        // "" disables the cache
 	Offline  bool          // serve from cache only
+
+	MaxTarball int64 // largest tarball Tarball downloads; default 100 MB
 }
 
 type cacheEntry struct {

@@ -81,6 +81,9 @@ type Result struct {
 	Score    int   // sum of severity weights, capped at 100
 	Level    Level // block if any blocking finding, else by score
 	Err      error // metadata could not be fetched; the package was not checked
+
+	// From the registry, for check --deep: where the tarball is and its integrity.
+	Tarball, RegistryIntegrity string
 }
 
 // Report is the analysis of a whole graph.
@@ -277,6 +280,9 @@ func hasInstallScript(m *registry.VersionMeta) bool {
 
 func check(in *Input) Result {
 	res := Result{Package: in.Package}
+	if in.Meta != nil {
+		res.Tarball, res.RegistryIntegrity = in.Meta.Dist.Tarball, in.Meta.Dist.Integrity
+	}
 	for _, r := range Rules {
 		res.Findings = append(res.Findings, r.Check(in)...)
 	}
@@ -284,15 +290,22 @@ func check(in *Input) Result {
 	return res
 }
 
-// Score sums finding weights (capped at 100) and derives the level: block if
-// any finding blocks, else by score.
+// Score adds up the weight of each rule's most severe finding (capped at 100)
+// and derives the level: block if any finding blocks, else by score. Several
+// findings of one rule (three advisories, two script stages) count once:
+// they are one kind of evidence; different rules add up.
 func Score(findings []Finding) (int, Level) {
-	score, level := 0, LevelNone
+	worst := map[string]Severity{}
+	level := LevelNone
 	for _, f := range findings {
-		score += int(f.Severity)
+		worst[f.Rule] = max(worst[f.Rule], f.Severity)
 		if f.Severity == Block {
 			level = LevelBlock
 		}
+	}
+	score := 0
+	for _, sev := range worst {
+		score += int(sev)
 	}
 	score = min(score, 100)
 	if level == LevelBlock {

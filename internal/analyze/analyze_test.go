@@ -404,3 +404,21 @@ func TestPrivateRegistryHostsAreTheRegistry(t *testing.T) {
 		t.Errorf("foreign host not flagged: %+v", res.Findings)
 	}
 }
+
+// Many findings of one rule say one thing: only the worst counts. Different
+// rules still add up.
+func TestScoreCountsEachRuleOnce(t *testing.T) {
+	vulns := []Finding{
+		{Rule: "SI-VUL-001", Severity: Medium}, {Rule: "SI-VUL-001", Severity: Medium}, {Rule: "SI-VUL-001", Severity: Low},
+	}
+	if score, level := Score(vulns); score != 30 || level != LevelMedium {
+		t.Errorf("three advisories: score %d level %s, want 30 medium", score, level)
+	}
+	mixed := append(vulns, Finding{Rule: "SI-REC-001", Severity: Medium})
+	if score, level := Score(mixed); score != 60 || level != LevelHigh {
+		t.Errorf("advisories + fresh release: score %d level %s, want 60 high", score, level)
+	}
+	if _, level := Score([]Finding{{Rule: "SI-VUL-001", Severity: Medium}, {Rule: "SI-VUL-001", Severity: Block}}); level != LevelBlock {
+		t.Errorf("a blocking finding must still block, got %s", level)
+	}
+}

@@ -98,7 +98,9 @@ code that **downloads and executes** (`SI-CODE-001`), code that **reads credenti
 a network send** (`SI-CODE-002`) and **obfuscated** code (`SI-CODE-003`). Results are cached
 per package version, so each version is scanned once. A high finding fails `--ci`; a
 script package with code findings is not approved by `--yes`. Files over 2 MB (bundles)
-are not scanned.
+are not scanned. `check --deep` does the same without installing: it downloads each
+checked package's tarball, verifies it against the lockfile's integrity hash (a mismatch
+blocks, as `SI-INT-001`), and scans it in memory; nothing is extracted to disk.
 
 ## Runtime monitor (Linux)
 
@@ -165,6 +167,7 @@ safe-install check                  # score every package in the lockfile
 safe-install check --fail-on medium # exit 1 at medium risk or worse
 safe-install check --format json    # or sarif; --sarif-file x.sarif writes SARIF alongside text
 safe-install check --diff origin/main  # only packages new or changed since a git ref (or an old lockfile)
+safe-install check --diff origin/main --deep  # …and download, verify and scan their code
 ```
 
 New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
@@ -194,8 +197,8 @@ count one level below their advisory severity (`npm audit` covers those in depth
 The action downloads the release binary for the runner (checksum-verified; `version:`
 picks a release, `source` builds from the action's checkout) and fails the job when a
 package reaches `fail-on`. On pull requests it checks only the packages the PR adds or
-upgrades (`diff: auto`, comparing with the base branch); set `diff: none` to always check
-everything.
+upgrades (`diff: auto`, comparing with the base branch) and scans their code
+(`deep: auto`); set `diff: none` to always check everything.
 
 ## Private registries
 
