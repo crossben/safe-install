@@ -81,7 +81,7 @@ const day = 24 * time.Hour
 func run(t *testing.T, f *fakeFetcher, pkgs ...*lockfile.Package) *Report {
 	t.Helper()
 	return Analyze(context.Background(), graph(pkgs...), f, Config{
-		Now: now, MinReleaseAge: 72 * time.Hour, RegistryURL: registry.DefaultURL,
+		Now: now, MinReleaseAge: 72 * time.Hour, RegistryHosts: []string{"registry.npmjs.org"},
 	})
 }
 
@@ -384,5 +384,22 @@ func TestOSVFailureIsAWarning(t *testing.T) {
 	}
 	if r.Failed() != 0 {
 		t.Fatal("an OSV outage must not count as unchecked packages")
+	}
+}
+
+func TestPrivateRegistryHostsAreTheRegistry(t *testing.T) {
+	f := &fakeFetcher{docs: map[string]*registry.Packument{
+		"@corp/ui": doc("@corp/ui", ver{v: "1.0.0", age: 400 * day}),
+		"left-pad": doc("left-pad", ver{v: "1.0.0", age: 400 * day}),
+	}}
+	r := Analyze(context.Background(), graph(
+		&lockfile.Package{Name: "@corp/ui", Version: "1.0.0", Resolved: "https://npm.corp.example.com/npm/@corp/ui/-/ui-1.0.0.tgz"},
+		&lockfile.Package{Name: "left-pad", Version: "1.0.0", Resolved: "https://evil.example.net/left-pad-1.0.0.tgz"},
+	), f, Config{Now: now, RegistryHosts: []string{"registry.npmjs.org", "npm.corp.example.com"}})
+	if res := result(t, r, "@corp/ui@1.0.0"); len(res.Findings) != 0 {
+		t.Errorf("private registry flagged: %+v", res.Findings)
+	}
+	if res := result(t, r, "left-pad@1.0.0"); !hasRule(res, "SI-INT-002", High) {
+		t.Errorf("foreign host not flagged: %+v", res.Findings)
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/npmrc"
 	"github.com/crossben/safe-install/internal/osv"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
@@ -127,7 +128,7 @@ func analysisConfig(g *globalFlags, pol *policy.Policy, minAge time.Duration) an
 		Now:           time.Now(),
 		MinReleaseAge: minAge,
 		Exclude:       pol.Excluded,
-		RegistryURL:   registryURL(g),
+		RegistryHosts: registryConfig(g).Hosts(),
 		Popular:       popularity.Default(),
 	}
 	if u, ok := sourceURL(g, "SAFE_INSTALL_OSV_URL", osv.DefaultURL); ok {
@@ -172,14 +173,23 @@ func newFetcher(g *globalFlags) (registry.Fetcher, error) {
 	if path := os.Getenv("SAFE_INSTALL_REGISTRY_FIXTURES"); path != "" {
 		return registry.NewFixtureClient(path)
 	}
-	return &registry.Client{BaseURL: registryURL(g), CacheDir: registry.DefaultCacheDir(), Offline: g.offline}, nil
+	return &registry.Client{Config: registryConfig(g), CacheDir: registry.DefaultCacheDir(), Offline: g.offline}, nil
 }
 
-func registryURL(g *globalFlags) string {
-	if g.registry != "" {
-		return g.registry
+// registryConfig reads the project's (and user's) .npmrc and .yarnrc.yml;
+// --registry overrides the default registry. An unreadable file falls back
+// to the public registry rather than failing the run.
+func registryConfig(g *globalFlags) *npmrc.Config {
+	dir, _ := os.Getwd()
+	cfg, err := npmrc.Load(dir, os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "safe-install: ignoring registry config:", err)
+		cfg, _ = npmrc.Load(os.TempDir(), func(string) string { return "" })
 	}
-	return registry.DefaultURL
+	if g.registry != "" {
+		cfg.SetRegistry(g.registry)
+	}
+	return cfg
 }
 
 // parseMinAge accepts Go durations plus a "d" (days) suffix; "0" disables.

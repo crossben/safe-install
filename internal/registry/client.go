@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/crossben/safe-install/internal/npmrc"
 )
 
 // DefaultURL is the public npm registry.
@@ -24,8 +26,9 @@ const maxPackument = 128 << 20
 
 // Errors.
 var (
-	ErrNotFound  = errors.New("package not found in registry")
-	ErrNotCached = errors.New("not in cache (offline mode)")
+	ErrNotFound     = errors.New("package not found in registry")
+	ErrNotCached    = errors.New("not in cache (offline mode)")
+	ErrUnauthorized = errors.New("registry refused access; check the registry credentials in .npmrc / .yarnrc.yml")
 )
 
 // Fetcher returns packuments by package name.
@@ -35,10 +38,11 @@ type Fetcher interface {
 
 // Client fetches packuments over HTTP with an ETag-revalidated disk cache.
 type Client struct {
-	BaseURL  string       // default DefaultURL
-	HTTP     *http.Client // default: 30s timeout
-	CacheDir string       // "" disables the cache
-	Offline  bool         // serve from cache only
+	Config   *npmrc.Config // registries and credentials; nil uses BaseURL without auth
+	BaseURL  string        // default DefaultURL, when Config is nil
+	HTTP     *http.Client  // default: 30s timeout
+	CacheDir string        // "" disables the cache
+	Offline  bool          // serve from cache only
 }
 
 type cacheEntry struct {
@@ -63,6 +67,13 @@ func (c *Client) Packument(ctx context.Context, name string) (*Packument, error)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "safe-install")
+	if c.Config != nil {
+		// Credentials only for the registry configured for this URL; Go drops
+		// the header if the registry redirects to another host.
+		if auth := c.Config.AuthFor(u); auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+	}
 	if cached != nil && cached.ETag != "" {
 		req.Header.Set("If-None-Match", cached.ETag)
 	}
@@ -77,6 +88,8 @@ func (c *Client) Packument(ctx context.Context, name string) (*Packument, error)
 		return decode(cached.Body)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%s: %w", name, ErrNotFound)
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, fmt.Errorf("%s: %w (%s)", name, ErrUnauthorized, resp.Status)
 	case resp.StatusCode != http.StatusOK:
 		return nil, fmt.Errorf("%s: registry returned %s", name, resp.Status)
 	}
@@ -105,6 +118,9 @@ func decode(body []byte) (*Packument, error) {
 
 func (c *Client) url(name string) string {
 	base := c.BaseURL
+	if c.Config != nil {
+		base = c.Config.RegistryFor(name)
+	}
 	if base == "" {
 		base = DefaultURL
 	}

@@ -152,21 +152,20 @@ type sourceRule struct{}
 func (sourceRule) ID() string { return "SI-INT-002" }
 
 func (r sourceRule) Check(in *Input) []Finding {
-	if in.Package.Resolved == "" || in.Config.RegistryURL == "" {
+	if in.Package.Resolved == "" || len(in.Config.RegistryHosts) == 0 {
 		return nil
 	}
 	got, err := url.Parse(in.Package.Resolved)
 	if err != nil || (got.Scheme != "http" && got.Scheme != "https") {
 		return nil
 	}
-	reg, err := url.Parse(in.Config.RegistryURL)
-	if err != nil {
-		return nil
+	for _, h := range in.Config.RegistryHosts {
+		if sameRegistry(got.Hostname(), h) {
+			return nil
+		}
 	}
-	if sameRegistry(got.Hostname(), reg.Hostname()) {
-		return nil
-	}
-	return []Finding{{r.ID(), High, fmt.Sprintf("downloaded from %s, not the registry (%s)", got.Hostname(), reg.Hostname())}}
+	return []Finding{{r.ID(), High, fmt.Sprintf("downloaded from %s, not a configured registry (%s)",
+		got.Hostname(), strings.Join(in.Config.RegistryHosts, ", "))}}
 }
 
 // registry.yarnpkg.com is a CNAME for the npm registry.

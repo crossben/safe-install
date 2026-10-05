@@ -116,7 +116,7 @@ type Config struct {
 	Now           time.Time
 	MinReleaseAge time.Duration          // 0 disables SI-REC-001
 	Exclude       func(name string) bool // packages exempt from SI-REC-001
-	RegistryURL   string                 // expected source of tarballs (SI-INT-002)
+	RegistryHosts []string               // expected tarball hosts (SI-INT-002); empty skips the rule
 	Concurrency   int                    // parallel registry fetches; default 16
 
 	Popular   *popularity.List // enables SI-POP-001 and SI-POP-002

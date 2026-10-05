@@ -178,6 +178,23 @@ The action downloads the release binary for the runner (checksum-verified; `vers
 picks a release, `source` builds from the action's checkout) and fails the job when a
 package reaches `fail-on`.
 
+## Private registries
+
+safe-install reads registries and credentials where your package manager does: the
+project's `.npmrc`, your user `.npmrc` (or `$NPM_CONFIG_USERCONFIG`), the project's
+`.yarnrc.yml` (Yarn berry) and `npm_config_registry`; `--registry` overrides the default.
+Scoped registries (`@corp:registry=…`) and per-host credentials (`_authToken`, `_auth`,
+`username` / `_password`, with `${ENV}` expansion) are supported:
+
+```ini
+@corp:registry=https://npm.corp.example.com/
+//npm.corp.example.com/:_authToken=${NPM_TOKEN}
+```
+
+A credential is sent only to the registry host and path it is configured for, never to
+OSV or npm's download counts API, and never printed. Tarballs from any configured
+registry count as the registry for `SI-INT-002`.
+
 ## Privacy
 
 No telemetry. `safe-install` talks to your configured package registry, the
