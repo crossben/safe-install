@@ -24,7 +24,7 @@ import (
 )
 
 func newCheckCmd(g *globalFlags) *cobra.Command {
-	var failOn, sarifFile string
+	var failOn, sarifFile, diff string
 	cmd := &cobra.Command{
 		Use:   "check",
 		Short: "Analyze the dependency tree without installing",
@@ -43,15 +43,16 @@ func newCheckCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd, g, pol, threshold, sarifFile)
+			return runCheck(cmd, g, pol, threshold, sarifFile, diff)
 		},
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 when a package reaches this level: low, medium, high, block, none")
 	cmd.Flags().StringVar(&sarifFile, "sarif-file", "", "also write a SARIF report to this file (for code scanning)")
+	cmd.Flags().StringVar(&diff, "diff", "", "only check packages new or changed since a git ref (e.g. origin/main) or an old lockfile")
 	return cmd
 }
 
-func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level, sarifFile string) error {
+func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level, sarifFile, diff string) error {
 	minAge, err := parseMinAge(g.minAge)
 	if err != nil {
 		return err
@@ -76,7 +77,15 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		return err
 	}
 
+	if diff != "" {
+		base, err := baseGraph(path, diff)
+		if err != nil {
+			return err
+		}
+		graph = lockfile.Changed(base, graph)
+	}
 	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analysisConfig(g, pol, minAge))
+	rep.Base = diff
 
 	source := filepath.Base(path)
 	sarif := func(w io.Writer) error {

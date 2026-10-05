@@ -18,6 +18,11 @@ inputs:
   sarif:
     description: "Upload results to GitHub code scanning (needs `security-events: write`)"
     default: "false"
+  diff:
+    description: >-
+      Which packages to check: "auto" (on pull requests, only packages new or changed
+      versus the base branch; otherwise all), "none" (all), or a git ref / old lockfile
+    default: auto
   version:
     description: Release to use (latest, or a tag like v0.1.0), or "source" to build from this action's checkout
     default: latest
@@ -80,9 +85,23 @@ runs:
         FAIL_ON: ${{ inputs.fail-on }}
         MIN_AGE: ${{ inputs.min-age }}
         SARIF: ${{ inputs.sarif }}
+        DIFF: ${{ inputs.diff }}
       run: |
         args=(check --fail-on "$FAIL_ON" --min-age "$MIN_AGE")
         if [ "$SARIF" = "true" ]; then args+=(--sarif-file "$RUNNER_TEMP/safe-install.sarif"); fi
+        if [ "$DIFF" = auto ]; then
+          DIFF=none
+          case "${GITHUB_EVENT_NAME:-}" in
+            pull_request|pull_request_target)
+              if [ -n "${GITHUB_BASE_REF:-}" ] && git check-ref-format --branch "$GITHUB_BASE_REF" >/dev/null 2>&1 &&
+                 git fetch --no-tags --depth=1 origin "+refs/heads/$GITHUB_BASE_REF:refs/remotes/origin/$GITHUB_BASE_REF"; then
+                DIFF="origin/$GITHUB_BASE_REF"
+              else
+                echo "::warning::safe-install: could not fetch the base branch; checking every package"
+              fi ;;
+          esac
+        fi
+        if [ "$DIFF" != none ]; then args+=(--diff "$DIFF"); fi
         set +e
         "$RUNNER_TEMP/safe-install" "${args[@]}"
         code=$?

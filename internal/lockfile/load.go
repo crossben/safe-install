@@ -52,7 +52,6 @@ func Load(dir string) (*Graph, error) {
 
 // LoadFile parses one lockfile; its directory must hold the project's package.json.
 func LoadFile(path string) (*Graph, error) {
-	dir := filepath.Dir(path)
 	if filepath.Base(path) == "bun.lockb" {
 		return nil, ErrBinaryLockfile
 	}
@@ -60,7 +59,15 @@ func LoadFile(path string) (*Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch filepath.Base(path) {
+	return Parse(filepath.Base(path), data, filepath.Dir(path))
+}
+
+// Parse parses lockfile contents. name is the lockfile's file name; dir holds
+// the project's package.json (and workspaces), read for Yarn lockfiles.
+func Parse(name string, data []byte, dir string) (*Graph, error) {
+	switch name {
+	case "bun.lockb":
+		return nil, ErrBinaryLockfile
 	case "npm-shrinkwrap.json", "package-lock.json":
 		return parseNPM(data)
 	case "pnpm-lock.yaml":
@@ -78,7 +85,23 @@ func LoadFile(path string) (*Graph, error) {
 		}
 		return parseYarnV1(bytes.NewReader(data), ms)
 	}
-	return nil, fmt.Errorf("not a known lockfile: %s", path)
+	return nil, fmt.Errorf("not a known lockfile: %s", name)
+}
+
+// Changed returns the packages of cur that are not in base (new, or a new
+// version): the subgraph worth reviewing in a change. A nil base means
+// everything is new. Removed packages are not included.
+func Changed(base, cur *Graph) *Graph {
+	if base == nil {
+		return cur
+	}
+	out := &Graph{Format: cur.Format, Packages: map[string]*Package{}}
+	for id, p := range cur.Packages {
+		if _, ok := base.Packages[id]; !ok {
+			out.Packages[id] = p
+		}
+	}
+	return out
 }
 
 // manifest is the part of package.json that declares dependencies.

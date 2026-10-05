@@ -13,7 +13,11 @@ import (
 // Text writes a human-readable report: risky packages worst first, then a summary.
 func Text(w io.Writer, r *analyze.Report, source string) error {
 	ew := &errWriter{w: w}
-	ew.printf("Analyzed %d packages from %s (%s)", len(r.Results), source, r.Format)
+	if r.Base != "" {
+		ew.printf("Analyzed %d new or changed package(s) from %s (%s) vs %s", len(r.Results), source, r.Format, r.Base)
+	} else {
+		ew.printf("Analyzed %d packages from %s (%s)", len(r.Results), source, r.Format)
+	}
 	if r.Skipped > 0 {
 		ew.printf(", %d skipped (not from a registry)", r.Skipped)
 	}
@@ -67,6 +71,11 @@ func tags(res analyze.Result) string {
 	return ", " + strings.Join(t, ", ")
 }
 
+type jsonDiff struct {
+	Base     string `json:"base"`
+	Packages int    `json:"packages"` // new or changed packages checked
+}
+
 type jsonFinding struct {
 	Rule     string `json:"rule"`
 	Severity string `json:"severity"`
@@ -94,8 +103,12 @@ func JSON(w io.Writer, r *analyze.Report, source string) error {
 		Skipped  int           `json:"skipped"`
 		Failed   int           `json:"failed"`
 		Warnings []string      `json:"warnings"`
+		Diff     *jsonDiff     `json:"diff,omitempty"`
 		Packages []jsonPackage `json:"packages"`
-	}{string(r.Format), source, r.Worst().String(), r.Skipped, r.Failed(), append([]string{}, r.Warnings...), []jsonPackage{}}
+	}{string(r.Format), source, r.Worst().String(), r.Skipped, r.Failed(), append([]string{}, r.Warnings...), nil, []jsonPackage{}}
+	if r.Base != "" {
+		out.Diff = &jsonDiff{Base: r.Base, Packages: len(r.Results) + r.Skipped}
+	}
 	for _, res := range r.Results {
 		p := jsonPackage{
 			ID: res.Package.ID, Name: res.Package.Name, Version: res.Package.Version,

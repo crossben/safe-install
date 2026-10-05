@@ -276,3 +276,54 @@ func TestCRLFLockfiles(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMatchesLoadFile(t *testing.T) {
+	for _, fx := range basicFixtures {
+		dir := filepath.Join("testdata", "basic", fx.dir)
+		path, err := Find(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, err := Parse(filepath.Base(path), data, dir)
+		if err != nil {
+			t.Fatalf("%s: %v", fx.dir, err)
+		}
+		if g.String() != loadBasic(t, fx.dir).String() {
+			t.Errorf("%s: Parse differs from LoadFile", fx.dir)
+		}
+	}
+}
+
+func TestChanged(t *testing.T) {
+	base := loadBasic(t, "npm")
+	cur := loadBasic(t, "npm")
+	if got := Changed(base, cur); len(got.Packages) != 0 {
+		t.Fatalf("identical graphs: %d changed", len(got.Packages))
+	}
+
+	// A new package, and an upgraded one.
+	cur.Packages["left-pad@1.3.0"] = &Package{ID: "left-pad@1.3.0", Name: "left-pad", Version: "1.3.0", Direct: true}
+	delete(cur.Packages, "ms@2.1.3")
+	cur.Packages["ms@2.1.4"] = &Package{ID: "ms@2.1.4", Name: "ms", Version: "2.1.4", Direct: true}
+	// A removed package is not reported.
+	delete(cur.Packages, "is-number@6.0.0")
+
+	got := Changed(base, cur)
+	var ids []string
+	for _, p := range got.Sorted() {
+		ids = append(ids, p.ID)
+	}
+	if want := []string{"left-pad@1.3.0", "ms@2.1.4"}; strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("changed = %v, want %v", ids, want)
+	}
+	if got.Format != cur.Format {
+		t.Fatal("format not kept")
+	}
+	if Changed(nil, cur) != cur {
+		t.Fatal("no base: everything is new")
+	}
+}

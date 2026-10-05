@@ -148,6 +148,7 @@ eval "$(safe-install shell-init bash)"   # add to ~/.bashrc or ~/.zshrc
 safe-install check                  # score every package in the lockfile
 safe-install check --fail-on medium # exit 1 at medium risk or worse
 safe-install check --format json    # or sarif; --sarif-file x.sarif writes SARIF alongside text
+safe-install check --diff origin/main  # only packages new or changed since a git ref (or an old lockfile)
 ```
 
 New versions must be at least `--min-age` old (default `72h`; `0` disables). `install`
@@ -176,7 +177,9 @@ count one level below their advisory severity (`npm audit` covers those in depth
 
 The action downloads the release binary for the runner (checksum-verified; `version:`
 picks a release, `source` builds from the action's checkout) and fails the job when a
-package reaches `fail-on`.
+package reaches `fail-on`. On pull requests it checks only the packages the PR adds or
+upgrades (`diff: auto`, comparing with the base branch); set `diff: none` to always check
+everything.
 
 ## Private registries
 
