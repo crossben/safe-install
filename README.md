@@ -60,13 +60,16 @@ bound to this repository's release workflow) and attaches SLSA build provenance:
 
 ```sh
 cosign verify-blob checksums.txt \
-  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --bundle checksums.txt.sigstore.json \
   --certificate-identity-regexp '^https://github.com/crossben/safe-install/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum --ignore-missing -c checksums.txt
 
 gh attestation verify safe-install_linux_amd64.tar.gz --repo crossben/safe-install
 ```
+
+v0.1.0 predates the bundle format: verify it with `--signature checksums.txt.sig
+--certificate checksums.txt.pem` instead of `--bundle`.
 
 ## Usage
 
