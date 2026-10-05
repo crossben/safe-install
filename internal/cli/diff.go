@@ -30,19 +30,13 @@ func baseGraph(lockPath, base string) (*lockfile.Graph, error) {
 	if _, err := git(dir, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
 		return nil, fmt.Errorf("--diff %q: not a lockfile or a git ref in this repository", base)
 	}
-	top, err := git(dir, "rev-parse", "--show-toplevel")
+	// The project's path inside the repository, as git sees it: comparing
+	// filesystem paths breaks on symlinks (macOS /var -> /private/var).
+	prefix, err := git(dir, "rev-parse", "--show-prefix")
 	if err != nil {
 		return nil, err
 	}
-	abs, err := filepath.Abs(lockPath)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := filepath.Rel(strings.TrimSpace(top), abs)
-	if err != nil {
-		return nil, err
-	}
-	object := base + ":" + filepath.ToSlash(rel)
+	object := base + ":" + strings.TrimSpace(prefix) + name
 	if _, err := git(dir, "cat-file", "-e", object); err != nil {
 		return nil, nil // no lockfile at that ref
 	}

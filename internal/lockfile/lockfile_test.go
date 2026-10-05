@@ -3,6 +3,7 @@ package lockfile
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -326,4 +327,74 @@ func TestChanged(t *testing.T) {
 	if Changed(nil, cur) != cur {
 		t.Fatal("no base: everything is new")
 	}
+}
+
+func TestWhy(t *testing.T) {
+	g := loadBasic(t, "npm")
+	tests := []struct {
+		id   string
+		want [][]string
+	}{
+		{"debug@2.6.9", [][]string{{"debug@2.6.9"}}},
+		{"ms@2.0.0", [][]string{{"debug@2.6.9", "ms@2.0.0"}}},
+		{"ms@2.1.3", [][]string{{"ms@2.1.3"}}},
+		{"is-number@6.0.0", [][]string{{"is-odd@3.0.1", "is-number@6.0.0"}}},
+		{"@esbuild/linux-x64@0.25.10", [][]string{{"esbuild@0.25.10", "@esbuild/linux-x64@0.25.10"}}},
+	}
+	for _, tt := range tests {
+		paths, total := g.Why(tt.id, 10)
+		if total != len(tt.want) || fmt.Sprint(paths) != fmt.Sprint(tt.want) {
+			t.Errorf("Why(%s) = %v (total %d), want %v", tt.id, paths, total, tt.want)
+		}
+	}
+	if paths, total := g.Why("nope@1.0.0", 10); paths != nil || total != 0 {
+		t.Errorf("unknown package: %v %d", paths, total)
+	}
+}
+
+func TestWhyManyPathsAndLimit(t *testing.T) {
+	// a, b, c are direct and all depend on shared; shared -> leaf.
+	g := &Graph{Packages: map[string]*Package{}}
+	add := func(id string, direct bool, deps ...string) {
+		g.Packages[id] = &Package{ID: id, Name: id[:len(id)-6], Version: "1.0.0", Direct: direct, Dependencies: deps}
+	}
+	add("a@1.0.0", true, "shared@1.0.0")
+	add("b@1.0.0", true, "shared@1.0.0")
+	add("c@1.0.0", true, "shared@1.0.0", "leaf@1.0.0")
+	add("shared@1.0.0", false, "leaf@1.0.0", "a@1.0.0") // a cycle back to a
+	add("leaf@1.0.0", false)
+
+	paths, total := g.Why("leaf@1.0.0", 10)
+	// Shortest chains only: c -> leaf is length 2; the length-3 ones are not shown.
+	if total != 1 || fmt.Sprint(paths) != "[[c@1.0.0 leaf@1.0.0]]" {
+		t.Errorf("Why(leaf) = %v (total %d)", paths, total)
+	}
+	paths, total = g.Why("shared@1.0.0", 2)
+	if total != 3 || len(paths) != 2 {
+		t.Errorf("limit: %v (total %d), want 2 of 3", paths, total)
+	}
+}
+
+func TestFindByName(t *testing.T) {
+	g := loadBasic(t, "npm")
+	if got := g.Find("ms"); fmt.Sprint(ids(got)) != "[ms@2.0.0 ms@2.1.3]" {
+		t.Errorf("Find(ms) = %v", ids(got))
+	}
+	if got := g.Find("ms@2.1.3"); fmt.Sprint(ids(got)) != "[ms@2.1.3]" {
+		t.Errorf("Find(ms@2.1.3) = %v", ids(got))
+	}
+	if got := g.Find("@esbuild/linux-x64"); len(got) != 1 {
+		t.Errorf("Find(scoped) = %v", ids(got))
+	}
+	if got := g.Find("nope"); len(got) != 0 {
+		t.Errorf("Find(nope) = %v", ids(got))
+	}
+}
+
+func ids(ps []*Package) []string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, p.ID)
+	}
+	return out
 }

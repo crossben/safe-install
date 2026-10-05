@@ -140,3 +140,28 @@ func TestCheckDiffBadRef(t *testing.T) {
 		}
 	}
 }
+
+// macOS temp dirs (/var -> /private/var) and symlinked checkouts: git reports
+// the resolved repository root, the working directory is the symlinked path.
+func TestCheckDiffThroughSymlinkedPath(t *testing.T) {
+	proj := diffRepo(t)
+	link := filepath.Join(t.TempDir(), "linked-repo")
+	if err := os.Symlink(filepath.Dir(proj), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Chdir(filepath.Join(link, "web"))
+	if got := checkedIDs(t, "--diff", "HEAD"); !slices.Equal(got, []string{"new-dep@1.0.0"}) {
+		t.Fatalf("--diff HEAD through a symlink checked %v", got)
+	}
+}
+
+func TestCheckDiffWarnsWhenBaseHasNoLockfile(t *testing.T) {
+	diffRepo(t)
+	out, err := runCLIOut(t, "check", "--diff", "before-lockfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "package-lock.json does not exist at before-lockfile") {
+		t.Fatalf("no warning:\n%s", out)
+	}
+}

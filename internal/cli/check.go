@@ -77,15 +77,20 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		return err
 	}
 
+	var baseMissing bool
 	if diff != "" {
 		base, err := baseGraph(path, diff)
 		if err != nil {
 			return err
 		}
+		baseMissing = base == nil
 		graph = lockfile.Changed(base, graph)
 	}
 	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analysisConfig(g, pol, minAge))
 	rep.Base = diff
+	if baseMissing {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s does not exist at %s: every package counts as new", filepath.Base(path), diff))
+	}
 
 	source := filepath.Base(path)
 	sarif := func(w io.Writer) error {

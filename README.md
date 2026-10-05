@@ -128,6 +128,7 @@ safe-install scripts              # packages with install scripts and their appr
 safe-install approve esbuild      # approve and run now (--revoke, --global, --no-run)
 safe-install add left-pad         # add packages through the same review
 safe-install explain SI-SCR-002   # what a rule means and what to do
+safe-install why ms               # the dependency chains that bring a package in
 ```
 
 `minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
