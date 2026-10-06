@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, content string) {
@@ -104,5 +105,50 @@ func TestApproveCreatesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLookupExactBeatsGlob(t *testing.T) {
+	p := &Policy{File: File{AllowScripts: map[string]Approval{
+		"@esbuild/*":         {Trust: TrustProvenance, Repository: "r1"},
+		"@esbuild/linux-x64": {Hash: "h"},
+		"@*/*":               {Trust: TrustProvenance, Repository: "r2"},
+	}}}
+	if a, key, ok := p.Lookup("@esbuild/linux-x64"); !ok || key != "@esbuild/linux-x64" || a.Hash != "h" {
+		t.Errorf("exact: %v %q %+v", ok, key, a)
+	}
+	if _, key, ok := p.Lookup("@esbuild/darwin-arm64"); !ok || key != "@esbuild/*" {
+		t.Errorf("most specific glob: %v %q", ok, key)
+	}
+	if _, key, ok := p.Lookup("@other/x"); !ok || key != "@*/*" {
+		t.Errorf("broad glob: %v %q", ok, key)
+	}
+	if _, _, ok := p.Lookup("esbuild"); ok {
+		t.Error("unscoped name matched a scoped glob")
+	}
+}
+
+func TestExpired(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	for expires, want := range map[string]bool{"": false, "2026-10-07": false, "2026-10-06": false, "2026-10-05": true} {
+		if got := (Approval{Expires: expires}).Expired(now); got != want {
+			t.Errorf("Expired(%q) = %v, want %v", expires, got, want)
+		}
+	}
+}
+
+func TestGlobNeedsProvenance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := Approve(path, "@corp/*", Approval{Hash: "h"}); err == nil {
+		t.Fatal("a glob approval pinned to one hash was accepted")
+	}
+	if err := Approve(path, "@corp/*", Approval{Trust: TrustProvenance, Repository: "https://github.com/corp/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Approve(path, "x", Approval{Trust: TrustProvenance}); err == nil {
+		t.Fatal("provenance trust without a repository was accepted")
+	}
+	if err := Approve(path, "y", Approval{Trust: "vibes"}); err == nil {
+		t.Fatal("unknown trust mode was accepted")
 	}
 }

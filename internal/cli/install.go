@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/registry"
 	"github.com/crossben/safe-install/internal/sandbox"
 	"github.com/crossben/safe-install/internal/scripts"
 	"github.com/crossben/safe-install/internal/scriptshell"
@@ -220,7 +222,7 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	for _, c := range cands {
 		c.Findings = append(scripts.Scan(c), scriptRelevant(registryFindings[c.Package.ID])...)
 		c.Findings = append(c.Findings, s.code[c.Package.ID]...)
-		state, f := scripts.ApprovalState(c, s.pol.AllowScripts)
+		state, f := scripts.ApprovalState(c, s.pol, time.Now(), s.provenance())
 		c.State = state
 		if f != nil {
 			c.Findings = append(c.Findings, *f)
@@ -243,12 +245,31 @@ func scriptRelevant(fs []analyze.Finding) []analyze.Finding {
 	return out
 }
 
+// provenance returns a cached lookup of versions' npm provenance repository
+// (errors count as "no provenance": the approval then does not apply).
+func (s *session) provenance() scripts.Provenance {
+	client := &registry.Client{Config: registryConfig(s.g)}
+	cache := map[string]string{}
+	return func(name, version string) string {
+		id := name + "@" + version
+		if repo, ok := cache[id]; ok {
+			return repo
+		}
+		repo, err := client.ProvenanceRepo(s.cmd.Context(), name, version)
+		if err != nil {
+			repo = ""
+		}
+		cache[id] = repo
+		return repo
+	}
+}
+
 // approve decides which candidates run: recorded approvals always; then
 // asked one by one on a terminal, below-high with --yes, none otherwise.
 func (s *session) approve(cands []*scripts.Candidate) ([]*scripts.Candidate, error) {
 	var approved, pending []*scripts.Candidate
 	for _, c := range cands {
-		if c.State == scripts.Approved {
+		if c.State.Runs() {
 			approved = append(approved, c)
 		} else {
 			pending = append(pending, c)

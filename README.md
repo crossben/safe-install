@@ -154,7 +154,19 @@ in `.safe-install.json`. Commit it so your team shares approvals:
 ```
 
 An approval is pinned to a hash of the scripts **and the files they run**: if either
-changes, safe-install reports `SI-SCR-005` and asks again. Approved scripts run without a
+changes, safe-install reports `SI-SCR-005` and asks again. Two options loosen or tighten that:
+
+```sh
+safe-install approve sharp --trust provenance   # also future versions built by the same repository's CI
+safe-install approve '@corp/*' --trust provenance  # a whole scope (globs need provenance)
+safe-install approve esbuild --expires 90d      # ask again after 90 days
+```
+
+With `--trust provenance`, changed scripts are accepted only when the new version carries
+[npm provenance](https://docs.npmjs.com/generating-provenance-statements) from the
+repository recorded at approval time; a release published by hand (a stolen token) or built
+from another repository is not. safe-install reads the provenance the registry serves; it
+does not re-verify its Sigstore signature. Exact names take precedence over globs. Approved scripts run without a
 prompt, also in CI. A user-wide file with the same format lives in your config directory
 (`approve --global`); the project file wins on conflicts, and flags win over both.
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -23,12 +24,74 @@ type File struct {
 	AllowScripts         map[string]Approval `json:"allowScripts,omitempty"`         // by package name
 }
 
-// Approval lets one package run its install scripts as long as they hash
-// to Hash (the scripts and the files they run).
+// Trust modes for an approval.
+const (
+	TrustHash       = "hash"       // only scripts hashing to Hash (default)
+	TrustProvenance = "provenance" // also any version built by Repository's CI (npm provenance)
+)
+
+// Approval lets packages run their install scripts. Its key in allowScripts
+// is a package name or a glob ("@esbuild/*"; globs need TrustProvenance).
 type Approval struct {
-	Version string `json:"version"` // version that was reviewed (informational)
-	Hash    string `json:"hash"`
-	At      string `json:"at,omitempty"` // date approved
+	Version    string `json:"version,omitempty"`    // version that was reviewed (informational)
+	Hash       string `json:"hash,omitempty"`       // scripts and the files they run
+	Trust      string `json:"trust,omitempty"`      // TrustHash (default) or TrustProvenance
+	Repository string `json:"repository,omitempty"` // provenance source, for TrustProvenance
+	Expires    string `json:"expires,omitempty"`    // last valid day, YYYY-MM-DD
+	At         string `json:"at,omitempty"`         // date approved
+}
+
+// TrustMode returns the effective trust mode.
+func (a Approval) TrustMode() string {
+	if a.Trust == "" {
+		return TrustHash
+	}
+	return a.Trust
+}
+
+// Expired reports whether the approval's last valid day is before now.
+func (a Approval) Expired(now time.Time) bool {
+	if a.Expires == "" {
+		return false
+	}
+	last, err := time.Parse("2006-01-02", a.Expires)
+	if err != nil {
+		return true // unreadable: treat as expired rather than forever
+	}
+	return now.UTC().After(last.Add(24*time.Hour - time.Nanosecond))
+}
+
+func (a Approval) validate(name string) error {
+	switch a.TrustMode() {
+	case TrustHash:
+		if strings.ContainsAny(name, "*?[") {
+			return fmt.Errorf("%s: a glob approval needs trust %q (one hash cannot cover several packages)", name, TrustProvenance)
+		}
+	case TrustProvenance:
+		if a.Repository == "" {
+			return fmt.Errorf("%s: trust %q needs a repository", name, TrustProvenance)
+		}
+	default:
+		return fmt.Errorf("%s: unknown trust %q (use %q or %q)", name, a.Trust, TrustHash, TrustProvenance)
+	}
+	return nil
+}
+
+// Lookup finds the approval for a package: its exact name first, then the
+// most specific matching glob. key is the allowScripts entry that matched.
+func (p *Policy) Lookup(name string) (a Approval, key string, ok bool) {
+	if a, ok := p.AllowScripts[name]; ok {
+		return a, name, true
+	}
+	for k, cand := range p.AllowScripts {
+		if !strings.ContainsAny(k, "*?[") {
+			continue
+		}
+		if m, _ := path.Match(k, name); m && (!ok || len(k) > len(key) || (len(k) == len(key) && k < key)) {
+			a, key, ok = cand, k, true
+		}
+	}
+	return a, key, ok
 }
 
 // Policy is the effective policy: global config overlaid by the project file.
@@ -111,6 +174,9 @@ func Read(path string) (*File, error) {
 
 // Approve records an approval in the policy file at path, creating it if needed.
 func Approve(path, name string, a Approval) error {
+	if err := a.validate(name); err != nil {
+		return err
+	}
 	return update(path, func(f *File) bool {
 		if a.At == "" {
 			a.At = time.Now().UTC().Format("2006-01-02")

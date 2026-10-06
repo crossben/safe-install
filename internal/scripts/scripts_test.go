@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
@@ -200,17 +201,38 @@ func TestHash(t *testing.T) {
 }
 
 func TestApprovalState(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	c := &Candidate{Package: &lockfile.Package{ID: "a@2.0.0", Name: "a", Version: "2.0.0"}, Dir: t.TempDir(), Scripts: map[string]string{"install": "echo hi"}}
-	approved := map[string]policy.Approval{"a": {Version: "2.0.0", Hash: c.Hash()}}
-	if st, f := ApprovalState(c, approved); st != Approved || f != nil {
-		t.Fatalf("matching hash: %v %v", st, f)
+	pol := func(m map[string]policy.Approval) *policy.Policy {
+		return &policy.Policy{File: policy.File{AllowScripts: m}}
 	}
-	if st, _ := ApprovalState(c, nil); st != Unapproved {
-		t.Fatalf("no approval: %v", st)
+	provenance := func(repo string) Provenance {
+		return func(_, _ string) string { return repo }
 	}
-	changed := map[string]policy.Approval{"a": {Version: "1.0.0", Hash: "sha256-old"}}
-	st, f := ApprovalState(c, changed)
-	if st != Changed || f == nil || f.Rule != "SI-SCR-005" || f.Severity != analyze.High {
-		t.Fatalf("changed: %v %+v", st, f)
+	const repo = "https://github.com/a/a"
+
+	tests := []struct {
+		name  string
+		pol   *policy.Policy
+		prov  Provenance
+		state State
+		rule  string
+	}{
+		{"none", pol(nil), nil, Unapproved, ""},
+		{"hash match", pol(map[string]policy.Approval{"a": {Hash: c.Hash()}}), nil, Approved, ""},
+		{"hash changed", pol(map[string]policy.Approval{"a": {Version: "1.0.0", Hash: "sha256-old"}}), nil, Changed, "SI-SCR-005"},
+		{"expired", pol(map[string]policy.Approval{"a": {Hash: c.Hash(), Expires: "2026-10-01"}}), nil, Expired, ""},
+		{"provenance same repo", pol(map[string]policy.Approval{"a": {Hash: "sha256-old", Trust: policy.TrustProvenance, Repository: repo}}), provenance(repo), ApprovedByProvenance, ""},
+		{"provenance other repo", pol(map[string]policy.Approval{"a": {Hash: "sha256-old", Trust: policy.TrustProvenance, Repository: repo}}), provenance("https://github.com/fork/a"), Changed, "SI-SCR-005"},
+		{"provenance missing", pol(map[string]policy.Approval{"a": {Trust: policy.TrustProvenance, Repository: repo}}), provenance(""), Changed, "SI-SCR-005"},
+		{"glob scope", pol(map[string]policy.Approval{"*": {Trust: policy.TrustProvenance, Repository: repo}}), provenance(repo), ApprovedByProvenance, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, f := ApprovalState(c, tt.pol, now, tt.prov)
+			if st != tt.state || (tt.rule == "") != (f == nil) || (f != nil && f.Rule != tt.rule) {
+				t.Fatalf("state %v finding %+v; want %v %q", st, f, tt.state, tt.rule)
+			}
+		})
 	}
 }

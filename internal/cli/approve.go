@@ -2,7 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +16,7 @@ import (
 
 func newApproveCmd(g *globalFlags) *cobra.Command {
 	var revoke, global, force, noRun bool
+	var trust, expires string
 	cmd := &cobra.Command{
 		Use:   "approve <package>...",
 		Short: "Approve packages' install scripts and run them",
@@ -24,22 +28,22 @@ func newApproveCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := s.pol.ProjectPath
+			policyPath := s.pol.ProjectPath
 			if global {
-				if path, err = policy.GlobalPath(); err != nil {
+				if policyPath, err = policy.GlobalPath(); err != nil {
 					return err
 				}
 			}
 			if revoke {
 				for _, name := range names {
-					removed, err := policy.Revoke(path, name)
+					removed, err := policy.Revoke(policyPath, name)
 					if err != nil {
 						return err
 					}
 					if removed {
 						s.w.printf("revoked %s\n", name)
 					} else {
-						s.w.printf("%s was not approved in %s\n", name, path)
+						s.w.printf("%s was not approved in %s\n", name, policyPath)
 					}
 				}
 				return s.w.err
@@ -49,29 +53,60 @@ func newApproveCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if trust != policy.TrustHash && trust != policy.TrustProvenance {
+				return fmt.Errorf("unknown --trust %q (hash, provenance)", trust)
+			}
+			expiry, err := expiryDate(expires)
+			if err != nil {
+				return err
+			}
+			prov := s.provenance()
 			var chosen []*scripts.Candidate
 			for _, name := range names {
-				found := false
+				glob := strings.ContainsAny(name, "*?[")
+				if glob && trust != policy.TrustProvenance {
+					return fmt.Errorf("%s: approving a scope needs --trust provenance (one hash cannot cover several packages)", name)
+				}
+				var matched []*scripts.Candidate
 				for _, c := range cands {
-					if c.Package.Name != name {
-						continue
+					if ok, _ := path.Match(name, c.Package.Name); ok || c.Package.Name == name {
+						matched = append(matched, c)
 					}
-					found = true
+				}
+				if len(matched) == 0 {
+					return fmt.Errorf("%s has no install scripts in this project (installed with safe-install?)", name)
+				}
+				repo := ""
+				for _, c := range matched {
 					if c.Level >= analyze.LevelHigh && !force {
 						describe(s.w, c)
 						return fmt.Errorf("%s is %s risk; review the findings above and use --force to approve anyway", c.Package.ID, c.Level)
 					}
-					chosen = append(chosen, c)
+					if trust == policy.TrustProvenance {
+						r := prov(c.Package.Name, c.Package.Version)
+						switch {
+						case r == "":
+							return fmt.Errorf("%s has no npm provenance: approve it with --trust hash", c.Package.ID)
+						case repo != "" && r != repo:
+							return fmt.Errorf("%s: packages are built from different repositories (%s, %s); approve them separately", name, repo, r)
+						}
+						repo = r
+					}
 				}
-				if !found {
-					return fmt.Errorf("%s has no install scripts in this project (installed with safe-install?)", name)
+				a := policy.Approval{Trust: trust, Repository: repo, Expires: expiry}
+				if !glob {
+					a.Version, a.Hash = matched[0].Package.Version, matched[0].Hash()
 				}
-			}
-			for _, c := range chosen {
-				if err := policy.Approve(path, c.Package.Name, policy.Approval{Version: c.Package.Version, Hash: c.Hash()}); err != nil {
+				if trust == policy.TrustHash {
+					a.Trust = ""
+				}
+				if err := policy.Approve(policyPath, name, a); err != nil {
 					return err
 				}
-				s.w.printf("approved %s (%s)\n", c.Package.ID, strings.Join(c.Stages(), ", "))
+				for _, c := range matched {
+					s.w.printf("approved %s (%s)%s\n", c.Package.ID, strings.Join(c.Stages(), ", "), approvalNote(a))
+				}
+				chosen = append(chosen, matched...)
 			}
 			if noRun {
 				return s.w.err
@@ -84,8 +119,42 @@ func newApproveCmd(g *globalFlags) *cobra.Command {
 	f.BoolVar(&global, "global", false, "record in the user config instead of the project's "+policy.FileName)
 	f.BoolVar(&force, "force", false, "approve even high or blocking risk")
 	f.BoolVar(&noRun, "no-run", false, "record the approval without running the scripts now")
+	f.StringVar(&trust, "trust", policy.TrustHash, "hash: exactly these scripts; provenance: also future versions built by the same repository's CI (npm provenance)")
+	f.StringVar(&expires, "expires", "", "make the approval expire, e.g. 90d or 2027-01-31")
 	addMonitorFlag(cmd, g)
 	return cmd
+}
+
+// expiryDate turns "90d" or "2027-01-31" into a YYYY-MM-DD date ("" stays "").
+func expiryDate(s string) (string, error) {
+	switch {
+	case s == "":
+		return "", nil
+	case strings.HasSuffix(s, "d"):
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil || n <= 0 {
+			return "", fmt.Errorf("invalid --expires %q (e.g. 90d or 2027-01-31)", s)
+		}
+		return time.Now().UTC().AddDate(0, 0, n).Format("2006-01-02"), nil
+	}
+	if _, err := time.Parse("2006-01-02", s); err != nil {
+		return "", fmt.Errorf("invalid --expires %q (e.g. 90d or 2027-01-31)", s)
+	}
+	return s, nil
+}
+
+func approvalNote(a policy.Approval) string {
+	var parts []string
+	if a.Trust == policy.TrustProvenance {
+		parts = append(parts, "trusting builds from "+a.Repository)
+	}
+	if a.Expires != "" {
+		parts = append(parts, "until "+a.Expires)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
 }
 
 func newScriptsCmd(g *globalFlags) *cobra.Command {
