@@ -4,8 +4,10 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,6 +34,7 @@ type globalFlags struct {
 	registry   string
 	minAge     string
 	monitor    string // "", "report" or "kill" (install, add, approve)
+	frozen     bool   // install exactly the lockfile (install --frozen-lockfile, ci)
 	sandbox    bool   // run approved scripts under Landlock (install, add, approve)
 	sandboxNet bool   // ...with the network left open
 }
@@ -146,8 +149,37 @@ func loadPolicy(cmd *cobra.Command, g *globalFlags) (*policy.Policy, error) {
 
 // Execute runs the CLI and returns the process exit code.
 func Execute() int {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "safe-install:", err)
+	return run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+}
+
+// run dispatches one invocation: safe-install's own commands go to cobra;
+// install verbs are routed to safe-install's install/add; verbs that would
+// run install scripts or download and execute code are refused; anything
+// else is passed to the project's package manager unchanged.
+func run(args []string, in io.Reader, out, errOut io.Writer) int {
+	root := newRootCmd()
+	root.SetIn(in)
+	root.SetOut(out)
+	root.SetErr(errOut)
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") && !isCommand(root, args[0]) {
+		cwd, _ := os.Getwd()
+		switch classify(args, projectScripts(cwd)) {
+		case verbInstall:
+			args = installArgsFor(args[1:])
+		case verbCleanInstall:
+			args = append([]string{"install", "--frozen-lockfile", "--"}, args[1:]...)
+		case verbRefused:
+			_, _ = fmt.Fprintln(errOut, "safe-install:", refusal(args))
+			return ExitPolicyFailure
+		case verbPassthrough:
+			return passthrough(args, false, in, out, errOut)
+		case verbScriptsOff:
+			return passthrough(args, true, in, out, errOut)
+		}
+	}
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		_, _ = fmt.Fprintln(errOut, "safe-install:", err)
 		var ee *exitError
 		if errors.As(err, &ee) {
 			return ee.code
@@ -155,4 +187,16 @@ func Execute() int {
 		return ExitToolError
 	}
 	return ExitOK
+}
+
+func isCommand(root *cobra.Command, name string) bool {
+	if name == "help" || name == "completion" || name == "__complete" {
+		return true
+	}
+	for _, c := range root.Commands() {
+		if c.Name() == name || c.HasAlias(name) {
+			return true
+		}
+	}
+	return false
 }

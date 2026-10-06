@@ -16,7 +16,12 @@ func (a npmAdapter) InstallNoScripts(ctx context.Context, dir string, opts Insta
 	if opts.MinAge > 0 {
 		before = time.Now().Add(-opts.MinAge)
 	}
-	cmd, err := a.installCmd(ctx, dir, opts.Args, before)
+	args := opts.Args
+	verb := "install"
+	if opts.Frozen && !opts.Add {
+		verb = "ci"
+	}
+	cmd, err := a.installCmd(ctx, dir, verb, args, before)
 	if err != nil {
 		return err
 	}
@@ -33,14 +38,14 @@ func (npmAdapter) RunScripts(ctx context.Context, _ string, targets []Target, op
 
 // installCmd builds the npm command. before maps to npm's --before: new
 // resolutions skip newer versions; versions already locked are kept.
-func (npmAdapter) installCmd(ctx context.Context, dir string, args []string, before time.Time) (*exec.Cmd, error) {
+func (npmAdapter) installCmd(ctx context.Context, dir, verb string, args []string, before time.Time) (*exec.Cmd, error) {
 	bin, err := exec.LookPath("npm")
 	if err != nil {
 		return nil, fmt.Errorf("npm not found in PATH: %w", err)
 	}
 	// Flag last (npm lets the last flag win) and env, so neither user args
 	// nor .npmrc can switch scripts back on.
-	argv := append([]string{"install"}, args...) // npm adds packages with install too
+	argv := append([]string{verb}, args...) // npm adds packages with install too
 	if !before.IsZero() {
 		argv = append(argv, "--before", before.UTC().Format(time.RFC3339))
 	}

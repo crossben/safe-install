@@ -30,6 +30,7 @@ type Adapter interface {
 type InstallOptions struct {
 	Args           []string      // passed through to the package manager
 	Add            bool          // add packages (named in Args) instead of installing
+	Frozen         bool          // install exactly the lockfile (npm ci, --frozen-lockfile, --immutable)
 	MinAge         time.Duration // skip versions younger than this when resolving; 0 disables
 	Stdout, Stderr io.Writer
 }
@@ -64,6 +65,12 @@ func For(k Kind, dir string) (Adapter, error) {
 		return bunAdapter{}, nil
 	}
 	return nil, fmt.Errorf("%w %q", ErrUnknownPM, k)
+}
+
+// Command runs the package manager k with args in dir (corepack-aware, like
+// the adapters).
+func Command(ctx context.Context, dir string, k Kind, args ...string) (*exec.Cmd, error) {
+	return command(ctx, dir, string(k), args...)
 }
 
 // SupportsMinAge reports whether the adapter can enforce a release age itself.

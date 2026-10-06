@@ -77,6 +77,7 @@ v0.1.0 predates the bundle format: verify it with `--signature checksums.txt.sig
 safe-install                 # or: safe-install install
 safe-install install --yes   # approve every script below high risk
 safe-install install -- --omit=dev   # flags after -- go to the package manager
+safe-install ci              # clean install from the lockfile (npm ci, --frozen-lockfile, --immutable)
 ```
 
 Dependencies are installed with every lifecycle script disabled. safe-install then lists
@@ -205,6 +206,16 @@ Projects build on it but cannot weaken it: blocked packages are reported as `SI-
 and `failOn` are at least as strict as the organization's. The policy must be https; if it
 cannot be fetched, the last cached copy is used with a warning, and with no cache
 safe-install stops rather than running without it.
+
+### Use it instead of your package manager
+
+Commands that run no dependency code go to your project's package manager, with its output
+and exit code: your own scripts (`safe-install run build`, `test`, `start`, and script names
+directly for Yarn, pnpm and bun) and read-only or publishing commands (`ls`, `outdated`,
+`view`, `why`, `audit`, `pack`, `publish`, …). Install verbs (`i`, `install`, `add`, `ci`) take
+safe-install's own reviewed path; `uninstall` / `remove` run with install scripts forced off.
+Everything else is refused, with what to do instead: that includes `update`, `rebuild`,
+`exec`, `dlx`, `create`, `audit fix`, `dedupe`, and any command safe-install does not know.
 
 ### Use it every time (opt-in)
 

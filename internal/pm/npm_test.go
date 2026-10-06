@@ -13,7 +13,7 @@ import (
 )
 
 func TestNPMInstallCommand(t *testing.T) {
-	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", []string{"--ignore-scripts=false", "--no-audit"}, time.Time{})
+	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", "install", []string{"--ignore-scripts=false", "--no-audit"}, time.Time{})
 	if err != nil {
 		t.Skipf("npm not installed: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestNPMInstallCommand(t *testing.T) {
 
 func TestNPMInstallBefore(t *testing.T) {
 	before := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
-	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", nil, before)
+	cmd, err := npmAdapter{}.installCmd(context.Background(), "/proj", "install", nil, before)
 	if err != nil {
 		t.Skipf("npm not installed: %v", err)
 	}

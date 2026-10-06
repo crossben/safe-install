@@ -18,7 +18,7 @@ type pnpmAdapter struct{}
 func (pnpmAdapter) Name() Kind { return PNPM }
 
 func (pnpmAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "pnpm", append(append([]string{verb(opts, "install")}, opts.Args...), "--ignore-scripts")...)
+	cmd, err := command(ctx, dir, "pnpm", append(append(append([]string{verb(opts, "install")}, opts.Args...), frozen(opts, "--frozen-lockfile")...), "--ignore-scripts")...)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ type yarnClassicAdapter struct{}
 func (yarnClassicAdapter) Name() Kind { return Yarn }
 
 func (yarnClassicAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "yarn", append(append([]string{verb(opts, "install")}, opts.Args...), "--ignore-scripts")...)
+	cmd, err := command(ctx, dir, "yarn", append(append(append([]string{verb(opts, "install")}, opts.Args...), frozen(opts, "--frozen-lockfile")...), "--ignore-scripts")...)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ type yarnBerryAdapter struct{}
 func (yarnBerryAdapter) Name() Kind { return Yarn }
 
 func (yarnBerryAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	cmd, err := command(ctx, dir, "yarn", append(append([]string{verb(opts, "install")}, opts.Args...), "--mode=skip-build")...)
+	cmd, err := command(ctx, dir, "yarn", append(append(append([]string{verb(opts, "install")}, opts.Args...), frozen(opts, "--immutable")...), "--mode=skip-build")...)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ type bunAdapter struct{}
 func (bunAdapter) Name() Kind { return Bun }
 
 func (bunAdapter) InstallNoScripts(ctx context.Context, dir string, opts InstallOptions) error {
-	args := append([]string{verb(opts, "install")}, opts.Args...)
+	args := append(append([]string{verb(opts, "install")}, opts.Args...), frozen(opts, "--frozen-lockfile")...)
 	if opts.MinAge > 0 {
 		args = append(args, fmt.Sprintf("--minimum-release-age=%d", int64(opts.MinAge.Seconds())))
 	}
@@ -118,6 +118,17 @@ func verb(opts InstallOptions, install string) string {
 	}
 	return install
 }
+
+// frozen returns the flag that installs exactly the lockfile, when asked.
+func frozen(opts InstallOptions, flag string) []string {
+	if opts.Frozen && !opts.Add {
+		return []string{flag}
+	}
+	return nil
+}
+
+// YarnBerry reports whether the Yarn project in dir uses Yarn 2+.
+func YarnBerry(dir string) bool { return isBerry(dir) }
 
 // isBerry decides between Yarn classic and berry from the project alone:
 // packageManager, then .yarnrc.yml, then the lockfile format; default classic.

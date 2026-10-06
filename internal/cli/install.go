@@ -37,6 +37,7 @@ func newInstallCmd(g *globalFlags) *cobra.Command {
 			return runInstall(cmd, g, args, false)
 		},
 	}
+	cmd.Flags().BoolVar(&g.frozen, "frozen-lockfile", false, "install exactly the lockfile (npm ci, --frozen-lockfile, --immutable)")
 	addMonitorFlag(cmd, g)
 	return cmd
 }
@@ -131,7 +132,7 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 		}
 	}
 	w.printf("safe-install: using %s (%s); lifecycle scripts disabled; %s\n", s.det.Kind, s.det.Source, gate)
-	opts := pm.InstallOptions{Args: pmArgs, Add: add, MinAge: minAge, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}
+	opts := pm.InstallOptions{Args: pmArgs, Add: add, Frozen: g.frozen, MinAge: minAge, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}
 	if err := s.adapter.InstallNoScripts(cmd.Context(), s.dir, opts); err != nil {
 		return err
 	}
