@@ -19,7 +19,9 @@ import (
 	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/sandbox"
 	"github.com/crossben/safe-install/internal/scripts"
+	"github.com/crossben/safe-install/internal/scriptshell"
 )
 
 func newInstallCmd(g *globalFlags) *cobra.Command {
@@ -100,6 +102,9 @@ func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
 	}
 	mode, err := monitorMode(g)
 	if err != nil {
+		return nil, err
+	}
+	if err := sandboxCheck(g); err != nil {
 		return nil, err
 	}
 	return &session{cmd: cmd, g: g, dir: dir, det: det, adapter: adapter, pol: pol,
@@ -298,7 +303,7 @@ func (s *session) run(cands []*scripts.Candidate) error {
 		targets = append(targets, pm.Target{Name: c.Package.Name, Version: c.Package.Version, Dir: c.Dir, Stages: c.Stages()})
 	}
 	opts := pm.RunOptions{Stdout: s.cmd.OutOrStdout(), Stderr: s.cmd.ErrOrStderr()}
-	watching := ""
+	var how []string
 	var ms *monitor.Session
 	if s.monitor != "" {
 		var err error
@@ -306,17 +311,35 @@ func (s *session) run(cands []*scripts.Candidate) error {
 			return err
 		}
 		defer func() { _ = ms.Close() }()
-		if opts.ScriptShell, err = ms.ScriptShell(); err != nil {
+		opts.Env = ms.Env()
+		how = append(how, fmt.Sprintf("the runtime monitor (%s)", s.monitor))
+	}
+	if s.g.sandbox {
+		opts.Env = append(opts.Env, scriptshell.SandboxEnv(s.dir, s.g.sandboxNet, nil)...)
+		how = append(how, "the sandbox")
+	}
+	if len(how) > 0 {
+		self, err := os.Executable()
+		if err != nil {
 			return err
 		}
-		opts.Env = ms.Env()
-		watching = fmt.Sprintf(" under the runtime monitor (%s)", s.monitor)
+		opts.ScriptShell = self
+	}
+	watching := ""
+	if len(how) > 0 {
+		watching = " under " + strings.Join(how, " and ")
 	}
 	s.w.printf("\nsafe-install: running approved scripts for %d package(s)%s\n", len(targets), watching)
+	if s.g.sandbox {
+		s.w.printf("safe-install: %s\n", sandbox.Summary(s.g.sandboxNet))
+	}
 	if s.w.err != nil {
 		return s.w.err
 	}
 	runErr := s.adapter.RunScripts(s.cmd.Context(), s.dir, targets, opts)
+	if runErr != nil && s.g.sandbox {
+		runErr = fmt.Errorf("%w (the sandbox may have blocked it: a script that needs the network needs --sandbox-net; one that reads outside the project cannot run sandboxed)", runErr)
+	}
 	if ms != nil {
 		recs, err := ms.Records()
 		if err != nil {

@@ -8,3 +8,8 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
+
+# sandbox tests (removed after each run)
+.sandbox-home-*
+internal/sandbox/.sandbox-home-*
+internal/cli/.sandbox-home-*

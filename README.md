@@ -118,6 +118,25 @@ traced, not the package manager. strace sees a syscall once it happened, so `kil
 the script *after* the first dangerous action, not before it. On macOS and Windows,
 `--monitor` is not available; everything else works the same.
 
+## Sandbox (Linux)
+
+```sh
+safe-install install --sandbox              # approved scripts can't see your home folder or the network
+safe-install install --sandbox --sandbox-net  # …but may download (puppeteer, prebuilt binaries)
+```
+
+`--sandbox` runs each approved script under [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
+(no root needed): it can read the system and the project, write only to its package, the
+project's `node_modules`, temp folders and package caches, and cannot open the rest of your
+home folder, so `~/.ssh`, `~/.aws`, `~/.npmrc`, browser profiles and `~/.bashrc` are out of
+reach. Outgoing TCP is blocked unless you pass `--sandbox-net` (UDP too on Linux 6.15+-class
+kernels with Landlock ABI 10). Only the scripts are sandboxed, not the package manager.
+Combine it with `--monitor` to see what a blocked script tried.
+
+The sandbox blocks rather than reports: a script that genuinely needs something outside
+those paths fails ("permission denied"). It needs Landlock (Linux 5.13+; 6.7+ to block the
+network) and refuses to run rather than silently doing less.
+
 ## Approvals and policy
 
 Answering **y** at the prompt (or running `safe-install approve <pkg>`) records the approval

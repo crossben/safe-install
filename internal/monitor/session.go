@@ -125,6 +125,15 @@ func MaybeRunAsShell(args []string) (int, bool) {
 	return RunShell(args[1:]), true
 }
 
+// WillRun reports whether MaybeRunAsShell would handle args, returning a
+// function that does so (for callers that must prepare the process first).
+func WillRun(args []string) (func() int, bool) {
+	if os.Getenv(envLog) == "" || len(args) < 3 || args[1] != "-c" {
+		return nil, false
+	}
+	return func() int { code, _ := MaybeRunAsShell(args); return code }, true
+}
+
 func runPlain(args []string) int {
 	cmd := exec.Command("/bin/sh", args...) // #nosec G204 -- the script npm asked us to run
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr

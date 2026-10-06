@@ -11,6 +11,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/sandbox"
 )
 
 // Exit codes (plan §8).
@@ -23,14 +24,16 @@ const (
 
 // Global flags shared by every command.
 type globalFlags struct {
-	pm       string
-	yes      bool
-	ci       bool
-	format   string
-	offline  bool
-	registry string
-	minAge   string
-	monitor  string // "", "report" or "kill" (install, add, approve)
+	pm         string
+	yes        bool
+	ci         bool
+	format     string
+	offline    bool
+	registry   string
+	minAge     string
+	monitor    string // "", "report" or "kill" (install, add, approve)
+	sandbox    bool   // run approved scripts under Landlock (install, add, approve)
+	sandboxNet bool   // ...with the network left open
 }
 
 // exitError carries a specific exit code up to Execute.
@@ -71,10 +74,26 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// addMonitorFlag adds --monitor to a command that runs install scripts.
+// addMonitorFlag adds --monitor and --sandbox to a command that runs install scripts.
 func addMonitorFlag(cmd *cobra.Command, g *globalFlags) {
 	cmd.Flags().StringVar(&g.monitor, "monitor", "", "watch approved scripts as they run (Linux): report, or kill on the first high-risk action")
 	cmd.Flags().Lookup("monitor").NoOptDefVal = string(monitor.ModeReport)
+	cmd.Flags().BoolVar(&g.sandbox, "sandbox", false, "run approved scripts in a Landlock sandbox (Linux): no home folder, no network, writes only to the package, node_modules, temp and caches")
+	cmd.Flags().BoolVar(&g.sandboxNet, "sandbox-net", false, "with --sandbox, leave the network open (for scripts that download binaries)")
+}
+
+// sandboxCheck validates --sandbox before anything is installed.
+func sandboxCheck(g *globalFlags) error {
+	if g.sandboxNet && !g.sandbox {
+		return errors.New("--sandbox-net only makes sense with --sandbox")
+	}
+	if !g.sandbox {
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("the sandbox is Linux-only. Want this too? Too bad, you're on %s. Everything else in safe-install works the same here", osName())
+	}
+	return sandbox.Check(g.sandboxNet)
 }
 
 // monitorMode validates --monitor; the error explains the Linux-only part.
