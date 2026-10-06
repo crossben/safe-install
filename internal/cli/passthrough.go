@@ -75,7 +75,7 @@ func classify(args []string, scripts map[string]bool) verbKind {
 		return verbCleanInstall
 	case scriptsOffVerbs[verb]:
 		return verbScriptsOff
-	case verb == "init" && len(args) > 1 && !strings.HasPrefix(args[1], "-"):
+	case verb == "init" && initializer(args[1:]) != "":
 		return verbRefused // npm init <initializer> runs create-<initializer>
 	case verb == "audit" && slices.Contains(args[1:], "fix"):
 		return verbRefused // audit fix reinstalls with install scripts on
@@ -85,11 +85,23 @@ func classify(args []string, scripts map[string]bool) verbKind {
 	return verbRefused
 }
 
+// initializer returns the first word after `init` that is not a flag. Any
+// such word counts, even one that might be a flag's value (`init -y vite`
+// runs create-vite): refusing a harmless `init --scope x` is the safe side.
+func initializer(rest []string) string {
+	for _, a := range rest {
+		if a != "--" && !strings.HasPrefix(a, "-") {
+			return a
+		}
+	}
+	return ""
+}
+
 func refusal(args []string) string {
 	why, ok := refusedReasons[args[0]]
 	switch {
 	case args[0] == "init":
-		why = "with an initializer it downloads and runs create-" + args[1] + " with no review"
+		why = "with an initializer it downloads and runs create-" + initializer(args[1:]) + " with no review"
 	case args[0] == "audit":
 		why = "it reinstalls packages with install scripts on"
 	case !ok:

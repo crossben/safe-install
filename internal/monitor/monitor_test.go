@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/crossben/safe-install/internal/analyze"
@@ -128,5 +129,99 @@ func TestSessionLogPathIsValidated(t *testing.T) {
 		if _, err := sessionLog(); (err == nil) != ok {
 			t.Errorf("sessionLog(%q) err = %v, want ok=%v", path, err, ok)
 		}
+	}
+}
+
+func readLine(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// Real strace output of a DNS lookup of registry.npmjs.org.
+func TestParseDNSAnswers(t *testing.T) {
+	ev, ok := Parse(readLine(t, "dns-a.txt"))
+	if !ok || ev.Kind != DNS {
+		t.Fatalf("A reply not parsed: %+v %v", ev, ok)
+	}
+	if ev.From != "127.0.0.53:53" {
+		t.Fatalf("From = %q", ev.From)
+	}
+	if ev.Answers["104.16.1.34"] != "registry.npmjs.org" || len(ev.Answers) < 4 {
+		t.Fatalf("answers = %v", ev.Answers)
+	}
+	ev, ok = Parse(readLine(t, "dns-aaaa.txt"))
+	if !ok || ev.Answers["2606:4700::6810:122"] != "registry.npmjs.org" {
+		t.Fatalf("AAAA answers = %v (%v)", ev.Answers, ok)
+	}
+	if _, ok := Parse(readLine(t, "netlink.txt")); ok {
+		t.Fatal("a netlink recvmsg was taken for DNS")
+	}
+}
+
+func TestConnectNamesTheHost(t *testing.T) {
+	c := &Classifier{Home: "/home/u", Resolvers: map[string]bool{"127.0.0.53": true}}
+	c.Classify(Event{Kind: DNS, From: "127.0.0.53:53", Answers: map[string]string{"104.16.1.34": "registry.npmjs.org", "2606:4700::6810:122": "registry.npmjs.org"}})
+	for addr, want := range map[string]string{
+		"104.16.1.34:443":           "connects to registry.npmjs.org:443",
+		"[2606:4700::6810:122]:443": "connects to registry.npmjs.org:443",
+		"93.184.216.34:80":          "connects to 93.184.216.34:80",
+	} {
+		f, ok := c.Classify(Event{Kind: Connect, Addr: addr})
+		if !ok || f.Message != want {
+			t.Errorf("%s: %q, want %q", addr, f.Message, want)
+		}
+	}
+}
+
+func TestDecodeCEscapes(t *testing.T) {
+	got := decodeC(`a\0\10\271\x41\n\t\"\\z`)
+	want := []byte{'a', 0, 8, 0o271, 'A', '\n', '\t', '"', '\\', 'z'}
+	if string(got) != string(want) {
+		t.Fatalf("decodeC = %v, want %v", got, want)
+	}
+}
+
+func TestParseDNSHostile(_ *testing.T) {
+	// Truncated, looping compression pointers, garbage: never panic.
+	for _, b := range [][]byte{nil, {1, 2, 3}, append(make([]byte, 12), 0xc0, 0x0c), {0, 1, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0, 0xc0, 12, 0, 1, 0, 1, 0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 1, 0, 4, 1, 2}} {
+		_ = parseDNS(b)
+	}
+}
+
+func FuzzParseDNS(f *testing.F) {
+	for _, name := range []string{"dns-a.txt", "dns-aaaa.txt"} {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			f.Fatal(err)
+		}
+		if raw, _, ok := rawQuoted(string(data)); ok {
+			f.Add(decodeC(raw))
+		}
+	}
+	f.Fuzz(func(_ *testing.T, b []byte) { _ = parseDNS(b) })
+}
+
+// A script can send itself a DNS-shaped packet: only replies from a system
+// resolver's port 53 may name a host.
+func TestForgedDNSDoesNotNameHosts(t *testing.T) {
+	c := &Classifier{Resolvers: parseResolvConf("# x\nnameserver 127.0.0.53\nnameserver fe80::1%eth0\n")}
+	if !c.Resolvers["fe80::1"] {
+		t.Fatalf("resolvers = %v", c.Resolvers)
+	}
+	forged := map[string]string{"6.6.6.6": "registry.npmjs.org"}
+	for _, from := range []string{"6.6.6.6:53", "127.0.0.53:5353", "127.0.0.1:53", ""} {
+		c.Classify(Event{Kind: DNS, From: from, Answers: forged})
+	}
+	if f, _ := c.Classify(Event{Kind: Connect, Addr: "6.6.6.6:443"}); f.Message != "connects to 6.6.6.6:443" {
+		t.Fatalf("forged reply named the host: %q", f.Message)
+	}
+	// The sender must come from strace's address, not from the payload.
+	line := `5 recvfrom(3, "sin_port=htons(53), sin_addr=inet_addr(\"127.0.0.53\")", 64, 0, {sa_family=AF_INET, sin_port=htons(4444), sin_addr=inet_addr("6.6.6.6")}, [16]) = 40`
+	if ev, ok := Parse(line); ok && ev.From != "6.6.6.6:4444" {
+		t.Fatalf("From taken from the payload: %q", ev.From)
 	}
 }

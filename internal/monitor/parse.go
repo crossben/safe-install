@@ -18,6 +18,7 @@ const (
 	Open
 	Rename
 	Unlink
+	DNS // a DNS response: which address belongs to which name
 )
 
 // Event is one relevant syscall made by a traced process.
@@ -29,6 +30,9 @@ type Event struct {
 	Args  []string // Exec argv
 	Addr  string   // Connect: ip:port
 	Write bool     // Open: for writing or creating
+
+	Answers map[string]string // DNS: IP -> name asked for
+	From    string            // DNS: ip:port the reply came from
 }
 
 var (
@@ -64,18 +68,11 @@ func Parse(line string) (Event, bool) {
 			ev.Args = quoted(a[1])
 		}
 	case "connect":
-		port := portRe.FindStringSubmatch(args)
-		if port == nil {
-			return Event{}, false // AF_UNIX and friends
-		}
-		ev.Kind = Connect
-		if ip := inet4Re.FindStringSubmatch(args); ip != nil {
-			ev.Addr = ip[1] + ":" + port[1]
-		} else if ip := inet6Re.FindStringSubmatch(args); ip != nil {
-			ev.Addr = "[" + ip[1] + "]:" + port[1]
-		} else {
+		addr, ok := sockAddr(args)
+		if !ok {
 			return Event{}, false
 		}
+		ev.Kind, ev.Addr = Connect, addr
 	case "open", "openat", "openat2":
 		if len(strs) == 0 {
 			return Event{}, false
@@ -91,6 +88,24 @@ func Parse(line string) (Event, bool) {
 			return Event{}, false
 		}
 		ev.Kind, ev.Path, ev.Path2 = Rename, strs[0], strs[1]
+	case "recvfrom", "recvmsg":
+		// Only a quoted buffer can be a DNS reply (netlink and others are
+		// printed as structures); keep it only if it parses as one.
+		raw, rest, ok := rawQuoted(args)
+		if !ok {
+			return Event{}, false
+		}
+		// The sender is read only after the buffer, so the payload
+		// cannot fake it.
+		from, ok := sockAddr(rest)
+		if !ok {
+			return Event{}, false
+		}
+		answers := parseDNS(decodeC(raw))
+		if answers == nil {
+			return Event{}, false
+		}
+		ev.Kind, ev.Answers, ev.From = DNS, answers, from
 	case "unlink", "unlinkat":
 		if len(strs) == 0 {
 			return Event{}, false
@@ -108,4 +123,30 @@ func quoted(s string) []string {
 		out = append(out, unescape.Replace(m[1]))
 	}
 	return out
+}
+
+// rawQuoted returns the first quoted string still escaped (for binary
+// buffers), and what follows it.
+func rawQuoted(s string) (raw, rest string, ok bool) {
+	m := strRe.FindStringSubmatchIndex(s)
+	if m == nil {
+		return "", "", false
+	}
+	return s[m[2]:m[3]], s[m[1]:], true
+}
+
+// sockAddr reads an AF_INET/AF_INET6 address as ip:port (AF_UNIX and
+// friends have none).
+func sockAddr(s string) (string, bool) {
+	port := portRe.FindStringSubmatch(s)
+	if port == nil {
+		return "", false
+	}
+	if ip := inet4Re.FindStringSubmatch(s); ip != nil {
+		return ip[1] + ":" + port[1], true
+	}
+	if ip := inet6Re.FindStringSubmatch(s); ip != nil {
+		return "[" + ip[1] + "]:" + port[1], true
+	}
+	return "", false
 }

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crossben/safe-install/internal/cache"
 )
 
 // maxOrgPolicy bounds a fetched organization policy.
@@ -117,16 +119,12 @@ func parseFile(data []byte, src string) (*File, error) {
 }
 
 func orgCachePath(src string) string {
-	dir := os.Getenv("SAFE_INSTALL_CACHE_DIR")
+	dir := cache.Sub(cache.Org)
 	if dir == "" {
-		d, err := os.UserCacheDir()
-		if err != nil {
-			return ""
-		}
-		dir = filepath.Join(d, "safe-install")
+		return ""
 	}
 	sum := sha256.Sum256([]byte(src))
-	return filepath.Join(dir, "org", hex.EncodeToString(sum[:])+".json")
+	return filepath.Join(dir, hex.EncodeToString(sum[:])+".json")
 }
 
 func isLoopback(host string) bool {

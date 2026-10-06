@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crossben/safe-install/internal/cache"
 	"github.com/crossben/safe-install/internal/npmrc"
 )
 
@@ -180,14 +181,8 @@ func (c *Client) writeCache(u string, e cacheEntry) {
 	}
 }
 
-// DefaultCacheDir is the per-user cache location for registry metadata.
-func DefaultCacheDir() string {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "safe-install", "registry")
-}
+// DefaultCacheDir is the cache for registry metadata.
+func DefaultCacheDir() string { return cache.Sub(cache.Registry) }
 
 // FixtureClient serves packuments from a JSON file ({"name": packument}),
 // for tests (SAFE_INSTALL_REGISTRY_FIXTURES).

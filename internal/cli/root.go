@@ -73,7 +73,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.minAge, "min-age", "72h", "minimum release age, e.g. 72h or 3d; 0 disables")
 
 	root.AddCommand(newInstallCmd(&g), newAddCmd(&g), newCheckCmd(&g), newScriptsCmd(&g),
-		newApproveCmd(&g), newWhyCmd(&g), newScanCmd(&g), newExplainCmd(), newShellInitCmd(), newVersionCmd())
+		newApproveCmd(&g), newWhyCmd(&g), newScanCmd(&g), newCacheCmd(), newExplainCmd(), newShellInitCmd(), newVersionCmd())
 	return root
 }
 
@@ -178,7 +178,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 	}
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
+	err := root.Execute()
+	pruneCache() // also after a failed command: the cache may have grown
+	if err != nil {
 		_, _ = fmt.Fprintln(errOut, "safe-install:", err)
 		var ee *exitError
 		if errors.As(err, &ee) {

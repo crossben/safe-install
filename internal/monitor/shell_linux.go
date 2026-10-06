@@ -11,7 +11,7 @@ import (
 	"syscall"
 )
 
-var traced = "execve,execveat,connect,open,openat,openat2,creat,rename,renameat,renameat2,unlink,unlinkat"
+var traced = "execve,execveat,connect,open,openat,openat2,creat,rename,renameat,renameat2,unlink,unlinkat,recvfrom,recvmsg"
 
 // Supported reports whether monitoring can run here.
 func Supported() error {

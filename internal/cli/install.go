@@ -132,6 +132,9 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 		}
 	}
 	w.printf("safe-install: using %s (%s); lifecycle scripts disabled; %s\n", s.det.Kind, s.det.Source, gate)
+	if warning := npmWarning(lookPath); warning != "" {
+		w.printf("safe-install: warning: %s\n", warning)
+	}
 	opts := pm.InstallOptions{Args: pmArgs, Add: add, Frozen: g.frozen, MinAge: minAge, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}
 	if err := s.adapter.InstallNoScripts(cmd.Context(), s.dir, opts); err != nil {
 		return err

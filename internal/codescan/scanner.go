@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/cache"
 )
 
 // Target is one installed package to scan.
@@ -25,18 +26,8 @@ type Scanner struct {
 	CacheDir string // "" disables the cache
 }
 
-// DefaultCacheDir is the per-user cache for scan results
-// ($SAFE_INSTALL_CACHE_DIR/codescan when set).
-func DefaultCacheDir() string {
-	if dir := os.Getenv("SAFE_INSTALL_CACHE_DIR"); dir != "" {
-		return filepath.Join(dir, "codescan")
-	}
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "safe-install", "codescan")
-}
+// DefaultCacheDir is the cache for scan results.
+func DefaultCacheDir() string { return cache.Sub(cache.Scan) }
 
 type cached struct {
 	Rule     string `json:"rule"`

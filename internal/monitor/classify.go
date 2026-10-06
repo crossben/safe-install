@@ -49,12 +49,51 @@ type Finding struct {
 // Classifier turns events into findings for one script run.
 type Classifier struct {
 	Home, Project, Package, Temp string
+	// Resolvers are the system name servers (IPs). Only their DNS replies
+	// name hosts: a script could otherwise send itself a forged reply to
+	// make a connection look like it goes to a well-known host.
+	Resolvers map[string]bool
+
+	names map[string]string // IP -> host name, from DNS replies seen so far
 }
 
 // NewClassifier uses $HOME and the OS temp dir.
 func NewClassifier(project, pkg string) *Classifier {
 	home, _ := os.UserHomeDir()
-	return &Classifier{Home: home, Project: project, Package: pkg, Temp: os.TempDir()}
+	return &Classifier{Home: home, Project: project, Package: pkg, Temp: os.TempDir(), Resolvers: systemResolvers()}
+}
+
+// systemResolvers reads the nameserver lines of /etc/resolv.conf.
+func systemResolvers() map[string]bool {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	return parseResolvConf(string(data))
+}
+
+func parseResolvConf(data string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(data, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "nameserver" {
+			if ip := net.ParseIP(strings.SplitN(f[1], "%", 2)[0]); ip != nil {
+				out[ip.String()] = true
+			}
+		}
+	}
+	return out
+}
+
+// fromResolver reports whether a reply came from a system name server's
+// port 53. Unprivileged processes cannot send from that address and port.
+func (c *Classifier) fromResolver(from string) bool {
+	host, port, err := net.SplitHostPort(from)
+	if err != nil || port != "53" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && c.Resolvers[ip.String()]
 }
 
 // Classify returns the finding for ev, if it is worth reporting.
@@ -65,12 +104,32 @@ func (c *Classifier) Classify(ev Event) (Finding, bool) {
 		if networkTools[strings.TrimSuffix(name, ".exe")] {
 			return Finding{"SI-MON-002", analyze.Medium, "runs " + clip(strings.Join(ev.Args, " "), 120)}, true
 		}
+	case DNS:
+		if !c.fromResolver(ev.From) {
+			return Finding{}, false
+		}
+		if c.names == nil {
+			c.names = map[string]string{}
+		}
+		for ip, name := range ev.Answers {
+			c.names[ip] = name
+		}
+		return Finding{}, false
 	case Connect:
 		host, port, err := net.SplitHostPort(ev.Addr)
 		if err != nil || port == "53" {
 			return Finding{}, false // DNS lookups
 		}
-		return Finding{"SI-MON-001", analyze.Medium, "connects to " + net.JoinHostPort(host, port)}, true
+		addr := net.JoinHostPort(host, port)
+		if ip := net.ParseIP(host); ip != nil {
+			// By name: one finding per host and port. (Address selection
+			// connects to every resolved address, so a single request can
+			// touch dozens of them.)
+			if name := c.names[ip.String()]; name != "" {
+				return Finding{"SI-MON-001", analyze.Medium, "connects to " + net.JoinHostPort(name, port)}, true
+			}
+		}
+		return Finding{"SI-MON-001", analyze.Medium, "connects to " + addr}, true
 	case Open:
 		if ev.Write {
 			return c.write(ev.Path, "writes")

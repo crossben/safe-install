@@ -88,7 +88,7 @@ terminal (CI) nothing is approved; `--ci` also exits 1 when a high-risk script i
 Your project's own lifecycle scripts are never run for you.
 
 Running approved scripts uses `npm run` inside each package's directory, so npm must be
-on `PATH` (it ships with Node).
+on `PATH` (it ships with Node); `install` warns up front when it is missing.
 
 ## Code scanning
 
@@ -116,7 +116,9 @@ reads of credentials (`~/.ssh`, `~/.npmrc`, cloud and browser data) and writes t
 persistence locations (shell startup files, `~/.ssh`, autostart, systemd, git hooks,
 system directories) or anywhere outside the project and caches. Only the scripts are
 traced, not the package manager. strace sees a syscall once it happened, so `kill` stops
-the script *after* the first dangerous action, not before it. On macOS and Windows,
+the script *after* the first dangerous action, not before it. Network findings name the host the script looked up (`connects to registry.npmjs.org:443`),
+from the DNS replies it received; only replies from the system's name servers
+(`/etc/resolv.conf`) count, so a script cannot forge one to disguise where it connects. On macOS and Windows,
 `--monitor` is not available; everything else works the same.
 
 ## Sandbox (Linux)
@@ -178,6 +180,7 @@ safe-install add left-pad         # add packages through the same review
 safe-install explain SI-SCR-002   # what a rule means and what to do
 safe-install why ms               # the dependency chains that bring a package in
 safe-install scan                 # scan installed packages' code (also part of every install)
+safe-install cache info           # cache size per part; `cache clean` empties it
 ```
 
 `minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
@@ -282,6 +285,14 @@ Scoped registries (`@corp:registry=…`) and per-host credentials (`_authToken`,
 A credential is sent only to the registry host and path it is configured for, never to
 OSV or npm's download counts API, and never printed. Tarballs from any configured
 registry count as the registry for `SI-INT-002`.
+
+## Cache
+
+Registry metadata, code-scan results and the organization policy are cached under
+`safe-install cache dir` (`SAFE_INSTALL_CACHE_DIR` moves it). The cache is capped at 1 GB
+(`SAFE_INSTALL_CACHE_MAX`, e.g. `500MB`): after each command, the least recently used files
+are removed once it is over the cap. `safe-install cache clean [registry|codescan|org]`
+empties it.
 
 ## Privacy
 

@@ -63,6 +63,10 @@ func TestClassify(t *testing.T) {
 		{[]string{"dlx", "create-vite"}, verbRefused},
 		{[]string{"create", "vite"}, verbRefused},
 		{[]string{"init", "vite"}, verbRefused},
+		{[]string{"init", "-y", "vite"}, verbRefused},
+		{[]string{"init", "--yes", "--", "vite"}, verbRefused},
+		{[]string{"init", "-w", "packages/a"}, verbRefused},
+		{[]string{"init", "--yes", "--scope=@me"}, verbPassthrough},
 		{[]string{"audit", "fix"}, verbRefused},
 		// ...and so does anything not known to be safe (fail closed).
 		{[]string{"dedupe"}, verbRefused},
