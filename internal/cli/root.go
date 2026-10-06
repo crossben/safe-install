@@ -135,6 +135,9 @@ func loadPolicy(cmd *cobra.Command, g *globalFlags) (*policy.Policy, error) {
 	if err != nil {
 		return nil, err
 	}
+	if pol.OrgWarning != "" {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "safe-install:", pol.OrgWarning)
+	}
 	if !cmd.Flags().Changed("min-age") && pol.MinReleaseAge != "" {
 		g.minAge = pol.MinReleaseAge
 	}

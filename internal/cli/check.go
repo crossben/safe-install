@@ -147,6 +147,7 @@ func analysisConfig(g *globalFlags, pol *policy.Policy, minAge time.Duration) an
 		Now:           time.Now(),
 		MinReleaseAge: minAge,
 		Exclude:       pol.Excluded,
+		Blocked:       pol.Blocked,
 		RegistryHosts: registryConfig(g).Hosts(),
 		Popular:       popularity.Default(),
 	}

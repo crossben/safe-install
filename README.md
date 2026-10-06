@@ -182,6 +182,30 @@ safe-install scan                 # scan installed packages' code (also part of 
 `minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
 the package manager itself applies to every package.
 
+### Organization policy
+
+A security team can publish one policy for every repository: a JSON file in the same
+format, plus `blockPackages` (name globs that must never be used). Point safe-install at
+it with `SAFE_INSTALL_ORG_POLICY` or `"orgPolicy": "https://…/policy.json"` (or a path) in
+your user config, which win, or in `.safe-install.json`. `SAFE_INSTALL_ORG_POLICY_TOKEN` is
+sent as a Bearer token to that host only, and never to a URL named by a project file:
+anyone can change one in a pull request.
+
+```json
+{
+  "minReleaseAge": "7d",
+  "failOn": "medium",
+  "blockPackages": ["event-stream", "@evil/*"],
+  "allowScripts": { "esbuild": { "trust": "provenance", "repository": "https://github.com/evanw/esbuild" } }
+}
+```
+
+Projects build on it but cannot weaken it: blocked packages are reported as `SI-POL-001`
+(blocking) and their scripts never run, even if a project approved them; `minReleaseAge`
+and `failOn` are at least as strict as the organization's. The policy must be https; if it
+cannot be fetched, the last cached copy is used with a warning, and with no cache
+safe-install stops rather than running without it.
+
 ### Use it every time (opt-in)
 
 `safe-install shell-init <bash|zsh|fish|pwsh>` prints functions that send `npm install`,

@@ -122,6 +122,7 @@ type Config struct {
 	Now           time.Time
 	MinReleaseAge time.Duration          // 0 disables SI-REC-001
 	Exclude       func(name string) bool // packages exempt from SI-REC-001
+	Blocked       func(name string) bool // packages blocked by policy (SI-POL-001)
 	RegistryHosts []string               // expected tarball hosts (SI-INT-002); empty skips the rule
 	Concurrency   int                    // parallel registry fetches; default 16
 
@@ -159,7 +160,7 @@ type Rule interface {
 
 // Rules is the default rule set.
 var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{},
-	typosquatRule{}, popularityRule{}, vulnRule{}}
+	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}}
 
 // Analyze fetches metadata for every registry package in g and runs the rules.
 func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Config) *Report {

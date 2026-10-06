@@ -160,6 +160,9 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 	if g.ci && codeHigh != "" {
 		return &exitError{ExitPolicyFailure, fmt.Errorf("%s contains high-risk code", codeHigh)}
 	}
+	if blocked := s.blockedReport(); blocked != "" && g.ci {
+		return &exitError{ExitPolicyFailure, fmt.Errorf("%s is blocked by policy", blocked)}
+	}
 	if g.ci {
 		ran := map[*scripts.Candidate]bool{}
 		for _, c := range approved {
@@ -226,6 +229,13 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 		c.State = state
 		if f != nil {
 			c.Findings = append(c.Findings, *f)
+		}
+		if s.pol.Blocked(c.Package.Name) {
+			// Blocks win over any approval, including the project's own.
+			c.State = scripts.Unapproved
+			if !hasRule(c.Findings, "SI-POL-001") {
+				c.Findings = append(c.Findings, analyze.Finding{Rule: "SI-POL-001", Severity: analyze.Block, Message: "blocked by policy (blockPackages)"})
+			}
 		}
 		_, c.Level = analyze.Score(c.Findings)
 	}
@@ -448,6 +458,34 @@ func summarize(w *lineWriter, cands, approved []*scripts.Candidate) {
 	if len(skipped) > 0 {
 		w.printf("\nSkipped packages may not work until their scripts run. Review and run them with `safe-install approve <package>`.\n")
 	}
+}
+
+// blockedReport lists installed packages the policy blocks and returns the
+// first, or "".
+func (s *session) blockedReport() string {
+	if s.graph == nil {
+		return ""
+	}
+	var blocked []string
+	for _, p := range s.graph.Sorted() {
+		if s.pol.Blocked(p.Name) {
+			blocked = append(blocked, p.ID)
+		}
+	}
+	if len(blocked) == 0 {
+		return ""
+	}
+	s.w.printf("\nBlocked by policy (SI-POL-001): %s\nThese packages must not be used here: remove them (`safe-install why <package>` shows what pulls them in).\n", strings.Join(blocked, ", "))
+	return blocked[0]
+}
+
+func hasRule(fs []analyze.Finding, rule string) bool {
+	for _, f := range fs {
+		if f.Rule == rule {
+			return true
+		}
+	}
+	return false
 }
 
 // codeReport prints code findings of packages without install scripts (those

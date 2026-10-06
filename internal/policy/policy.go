@@ -22,6 +22,8 @@ type File struct {
 	MinReleaseAgeExclude []string            `json:"minReleaseAgeExclude,omitempty"` // package name globs
 	FailOn               string              `json:"failOn,omitempty"`               // check threshold
 	AllowScripts         map[string]Approval `json:"allowScripts,omitempty"`         // by package name
+	BlockPackages        []string            `json:"blockPackages,omitempty"`        // name globs never installed or run
+	OrgPolicy            string              `json:"orgPolicy,omitempty"`            // organization policy: path or https URL
 }
 
 // Trust modes for an approval.
@@ -94,10 +96,15 @@ func (p *Policy) Lookup(name string) (a Approval, key string, ok bool) {
 	return a, key, ok
 }
 
-// Policy is the effective policy: global config overlaid by the project file.
+// Policy is the effective policy: the organization policy, overlaid by the
+// user's config and the project file, with the organization's minimums and
+// blocks enforced.
 type Policy struct {
 	File
 	ProjectPath string // where project approvals are written
+	Org         string // organization policy source, if any
+	OrgWarning  string // set when a cached organization policy was used
+	blocks      []string
 }
 
 // GlobalPath returns the user-wide config file
@@ -116,19 +123,38 @@ func GlobalPath() (string, error) {
 // Load reads the global config and the project file in dir; either may be missing.
 func Load(dir string) (*Policy, error) {
 	p := &Policy{File: File{AllowScripts: map[string]Approval{}}, ProjectPath: filepath.Join(dir, FileName)}
-	global, err := GlobalPath()
+	globalPath, err := GlobalPath()
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range []string{global, p.ProjectPath} {
+	var files []*File // user, then project
+	for _, path := range []string{globalPath, p.ProjectPath} {
 		f, err := Read(path)
 		if errors.Is(err, os.ErrNotExist) {
+			files = append(files, nil)
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		p.overlay(f)
+		files = append(files, f)
+	}
+
+	var org *File
+	if src, trusted := orgSource(files[1], files[0]); src != "" {
+		if org, p.OrgWarning, err = loadOrg(src, trusted); err != nil {
+			return nil, err
+		}
+		p.Org = src
+		p.overlay(org)
+	}
+	for _, f := range files {
+		if f != nil {
+			p.overlay(f)
+		}
+	}
+	if org != nil {
+		p.enforce(org)
 	}
 	return p, nil
 }
@@ -141,6 +167,7 @@ func (p *Policy) overlay(f *File) {
 		p.FailOn = f.FailOn
 	}
 	p.MinReleaseAgeExclude = append(p.MinReleaseAgeExclude, f.MinReleaseAgeExclude...)
+	p.blocks = append(p.blocks, f.BlockPackages...)
 	for name, a := range f.AllowScripts {
 		p.AllowScripts[name] = a
 	}

@@ -252,3 +252,15 @@ func (r vulnRule) Check(in *Input) []Finding {
 	}
 	return out
 }
+
+// SI-POL-001: blocked by the organization's (or project's) policy.
+type blockRule struct{}
+
+func (blockRule) ID() string { return "SI-POL-001" }
+
+func (r blockRule) Check(in *Input) []Finding {
+	if in.Config.Blocked != nil && in.Config.Blocked(in.Package.Name) {
+		return []Finding{{r.ID(), Block, "blocked by policy (blockPackages)"}}
+	}
+	return nil
+}
