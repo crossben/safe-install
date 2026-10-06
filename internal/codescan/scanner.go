@@ -24,6 +24,7 @@ type Target struct {
 // Scanner scans packages in parallel and caches results per version.
 type Scanner struct {
 	CacheDir string // "" disables the cache
+	Progress func() // called after each package is scanned; nil for none
 }
 
 // DefaultCacheDir is the cache for scan results.
@@ -47,6 +48,9 @@ func (s *Scanner) ScanAll(targets []Target) map[string][]analyze.Finding {
 			defer wg.Done()
 			for t := range work {
 				fs := s.scan(t)
+				if s.Progress != nil {
+					s.Progress()
+				}
 				if len(fs) > 0 {
 					mu.Lock()
 					out[t.ID] = fs

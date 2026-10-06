@@ -18,10 +18,11 @@ const (
 	Registry = "registry"
 	Scan     = "codescan"
 	Org      = "org"
+	Update   = "update"
 )
 
 // Parts lists every part, in display order.
-var Parts = []string{Registry, Scan, Org}
+var Parts = []string{Registry, Scan, Org, Update}
 
 // DefaultMax is the default size cap.
 const DefaultMax = 1 << 30

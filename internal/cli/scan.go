@@ -54,7 +54,7 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 	installed := scripts.Installed(dir)
-	code := codeFindings(installed, graph)
+	code := codeFindings(cmd, g, installed, graph)
 
 	// Only packages unpacked on disk were scanned; the rest (other platforms'
 	// optional binaries, Plug'n'Play zips) are counted as skipped.

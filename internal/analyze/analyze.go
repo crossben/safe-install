@@ -129,6 +129,8 @@ type Config struct {
 	Popular   *popularity.List // enables SI-POP-001 and SI-POP-002
 	Downloads DownloadSource   // weekly download counts for SI-POP-002; nil skips it
 	OSV       VulnSource       // advisories for SI-VUL-001; nil skips it
+
+	Progress func(done, total int) // called after each registry fetch; nil for none
 }
 
 // VulnSource looks up advisories (osv.Client).
@@ -178,7 +180,7 @@ func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Con
 		byName[p.Name] = append(byName[p.Name], p)
 	}
 
-	docs, errs := fetchAll(ctx, f, byName, cfg.Concurrency)
+	docs, errs := fetchAll(ctx, f, byName, cfg.Concurrency, cfg.Progress)
 
 	var inputs []*Input
 	for name, pkgs := range byName {
@@ -208,7 +210,7 @@ func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Con
 	return rep
 }
 
-func fetchAll(ctx context.Context, f registry.Fetcher, byName map[string][]*lockfile.Package, concurrency int) (map[string]*registry.Packument, map[string]error) {
+func fetchAll(ctx context.Context, f registry.Fetcher, byName map[string][]*lockfile.Package, concurrency int, progress func(done, total int)) (map[string]*registry.Packument, map[string]error) {
 	docs := map[string]*registry.Packument{}
 	errs := map[string]error{}
 	var mu sync.Mutex
@@ -223,6 +225,9 @@ func fetchAll(ctx context.Context, f registry.Fetcher, byName map[string][]*lock
 			<-sem
 			mu.Lock()
 			docs[name], errs[name] = doc, err
+			if progress != nil {
+				progress(len(docs), len(byName))
+			}
 			mu.Unlock()
 		}()
 	}

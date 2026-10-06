@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spf13/cobra"
+
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/codescan"
 	"github.com/crossben/safe-install/internal/registry"
@@ -17,7 +19,8 @@ import (
 // its code in memory (check --deep). Findings are added to the report; a
 // tarball that does not match its integrity is a blocking SI-INT-001 and is
 // not scanned; download failures become one warning.
-func deepScan(ctx context.Context, g *globalFlags, rep *analyze.Report) {
+func deepScan(cmd *cobra.Command, g *globalFlags, rep *analyze.Report) {
+	ctx := cmd.Context()
 	if g.offline {
 		rep.Warnings = append(rep.Warnings, "--deep skipped: --offline")
 		return
@@ -29,6 +32,8 @@ func deepScan(ctx context.Context, g *globalFlags, rep *analyze.Report) {
 	var failed []string
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
+	bar := startProgress(cmd, g, "Downloading and scanning", len(rep.Results))
+	defer bar.Stop()
 	for i := range rep.Results {
 		res := &rep.Results[i]
 		if res.Err != nil {
@@ -38,7 +43,7 @@ func deepScan(ctx context.Context, g *globalFlags, rep *analyze.Report) {
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
-			defer func() { <-sem }()
+			defer func() { <-sem; bar.Done() }()
 			fs, err := deepOne(ctx, client, scanner, res)
 			mu.Lock()
 			defer mu.Unlock()

@@ -89,10 +89,14 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		baseMissing = base == nil
 		graph = lockfile.Changed(base, graph)
 	}
-	rep := analyze.Analyze(cmd.Context(), graph, fetcher, analysisConfig(g, pol, minAge))
+	cfg := analysisConfig(g, pol, minAge)
+	bar := startProgress(cmd, g, "Checking packages", 0)
+	cfg.Progress = bar.Set
+	rep := analyze.Analyze(cmd.Context(), graph, fetcher, cfg)
+	bar.Stop()
 	rep.Base = diff
 	if deep {
-		deepScan(cmd.Context(), g, rep)
+		deepScan(cmd, g, rep)
 	}
 	if baseMissing {
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s does not exist at %s: every package counts as new", filepath.Base(path), diff))

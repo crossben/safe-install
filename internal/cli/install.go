@@ -189,7 +189,7 @@ func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
 		return nil, nil, err
 	}
 	s.graph = graph
-	s.code = codeFindings(scripts.Installed(s.dir), graph)
+	s.code = codeFindings(s.cmd, s.g, scripts.Installed(s.dir), graph)
 	cands, _ := scripts.Discover(s.dir, graph)
 	cands = scripts.Order(cands, graph)
 	s.assess(cands, graph.Format)
@@ -198,14 +198,16 @@ func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
 
 // codeFindings scans the code of every installed package (ID -> dir) that
 // the lockfile knows.
-func codeFindings(installed map[string]string, graph *lockfile.Graph) map[string][]analyze.Finding {
+func codeFindings(cmd *cobra.Command, g *globalFlags, installed map[string]string, graph *lockfile.Graph) map[string][]analyze.Finding {
 	var targets []codescan.Target
 	for id, pdir := range installed {
 		if p, ok := graph.Packages[id]; ok {
 			targets = append(targets, codescan.Target{ID: id, Integrity: p.Integrity, Dir: pdir})
 		}
 	}
-	return (&codescan.Scanner{CacheDir: codescan.DefaultCacheDir()}).ScanAll(targets)
+	bar := startProgress(cmd, g, "Scanning package code", len(targets))
+	defer bar.Stop()
+	return (&codescan.Scanner{CacheDir: codescan.DefaultCacheDir(), Progress: bar.Done}).ScanAll(targets)
 }
 
 // assess scans each candidate's scripts, adds the registry rules and checks
@@ -218,7 +220,11 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	registryFindings := map[string][]analyze.Finding{}
 	if fetcher, err := newFetcher(s.g); err == nil && len(cands) > 0 {
 		minAge, _ := parseMinAge(s.g.minAge)
-		rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, analysisConfig(s.g, s.pol, minAge))
+		cfg := analysisConfig(s.g, s.pol, minAge)
+		bar := startProgress(s.cmd, s.g, "Checking packages with install scripts", 0)
+		cfg.Progress = bar.Set
+		rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, cfg)
+		bar.Stop()
 		for _, w := range rep.Warnings {
 			s.w.printf("safe-install: %s\n", w)
 		}
