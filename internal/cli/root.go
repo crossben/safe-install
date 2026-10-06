@@ -67,7 +67,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&g.pm, "pm", "", "package manager to use (npm, pnpm, yarn, bun); detected when empty")
 	pf.BoolVarP(&g.yes, "yes", "y", false, "answer yes to prompts")
 	pf.BoolVar(&g.ci, "ci", false, "non-interactive mode; fail on policy violations")
-	pf.StringVar(&g.format, "format", "text", "output format: text, json, sarif")
+	pf.StringVar(&g.format, "format", "text", "output format: text, json, sarif (check also: markdown)")
 	pf.BoolVar(&g.offline, "offline", false, "use cached registry data only")
 	pf.StringVar(&g.registry, "registry", "", "registry URL (default https://registry.npmjs.org)")
 	pf.StringVar(&g.minAge, "min-age", "72h", "minimum release age, e.g. 72h or 3d; 0 disables")

@@ -234,7 +234,8 @@ eval "$(safe-install shell-init bash)"   # add to ~/.bashrc or ~/.zshrc
 ```sh
 safe-install check                  # score every package in the lockfile
 safe-install check --fail-on medium # exit 1 at medium risk or worse
-safe-install check --format json    # or sarif; --sarif-file x.sarif writes SARIF alongside text
+safe-install check --format json    # or sarif, markdown; --sarif-file x.sarif writes SARIF alongside text
+safe-install check --summary-file summary.md   # plus a short Markdown summary (for PR comments)
 safe-install check --diff origin/main  # only packages new or changed since a git ref (or an old lockfile)
 safe-install check --diff origin/main --deep  # …and download, verify and scan their code
 ```
@@ -261,6 +262,7 @@ count one level below their advisory severity (`npm audit` covers those in depth
     working-directory: .   # where package.json and the lockfile are
     fail-on: high          # low, medium, high, block, none
     sarif: true            # upload to code scanning (needs security-events: write)
+    comment: true          # comment on the PR (needs pull-requests: write)
 ```
 
 The action downloads the release binary for the runner (checksum-verified; `version:`
@@ -268,6 +270,13 @@ picks a release, `source` builds from the action's checkout) and fails the job w
 package reaches `fail-on`. On pull requests it checks only the packages the PR adds or
 upgrades (`diff: auto`, comparing with the base branch) and scans their code
 (`deep: auto`); set `diff: none` to always check everything.
+
+A short summary of the risky packages goes to the job summary on every run. With
+`comment: true`, it is also posted on the pull request, but only when there is something
+to report. Later runs edit that one comment instead of adding new ones. Package names and
+messages are shown as code, so a package can't put links, images or @mentions in the
+comment. On pull requests from forks the token is read-only, so the comment is skipped
+with a warning.
 
 ## Private registries
 

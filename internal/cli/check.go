@@ -24,7 +24,7 @@ import (
 )
 
 func newCheckCmd(g *globalFlags) *cobra.Command {
-	var failOn, sarifFile, diff string
+	var failOn, sarifFile, summaryFile, diff string
 	var deep bool
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -44,17 +44,18 @@ func newCheckCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runCheck(cmd, g, pol, threshold, sarifFile, diff, deep)
+			return runCheck(cmd, g, pol, threshold, sarifFile, summaryFile, diff, deep)
 		},
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 when a package reaches this level: low, medium, high, block, none")
 	cmd.Flags().StringVar(&sarifFile, "sarif-file", "", "also write a SARIF report to this file (for code scanning)")
+	cmd.Flags().StringVar(&summaryFile, "summary-file", "", "also write a Markdown summary to this file (for a pull request comment)")
 	cmd.Flags().BoolVar(&deep, "deep", false, "also download each checked package and scan its code (pair with --diff)")
 	cmd.Flags().StringVar(&diff, "diff", "", "only check packages new or changed since a git ref (e.g. origin/main) or an old lockfile")
 	return cmd
 }
 
-func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level, sarifFile, diff string, deep bool) error {
+func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn analyze.Level, sarifFile, summaryFile, diff string, deep bool) error {
 	minAge, err := parseMinAge(g.minAge)
 	if err != nil {
 		return err
@@ -113,21 +114,19 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		err = report.JSON(out, rep, source)
 	case "sarif":
 		err = sarif(out)
+	case "markdown":
+		err = report.Markdown(out, rep, source)
 	default:
-		return fmt.Errorf("unknown --format %q (text, json, sarif)", g.format)
+		return fmt.Errorf("unknown --format %q (text, json, sarif, markdown)", g.format)
 	}
 	if err != nil {
 		return err
 	}
-	if sarifFile != "" {
-		f, err := os.Create(sarifFile) // #nosec G304 -- path given by the user
-		if err != nil {
-			return err
-		}
-		werr := sarif(f)
-		if err := errors.Join(werr, f.Close()); err != nil {
-			return fmt.Errorf("writing %s: %w", sarifFile, err)
-		}
+	if err := writeReport(sarifFile, sarif); err != nil {
+		return err
+	}
+	if err := writeReport(summaryFile, func(w io.Writer) error { return report.Markdown(w, rep, source) }); err != nil {
+		return err
 	}
 
 	if n := rep.Failed(); n > 0 {
@@ -135,6 +134,22 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	}
 	if failOn != analyze.LevelNone && rep.Worst() >= failOn {
 		return &exitError{ExitPolicyFailure, fmt.Errorf("found %s-risk packages (--fail-on %s)", rep.Worst(), failOn)}
+	}
+	return nil
+}
+
+// writeReport writes one extra report to path, if one was asked for.
+func writeReport(path string, write func(io.Writer) error) error {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Create(path) // #nosec G304 -- path given by the user
+	if err != nil {
+		return err
+	}
+	werr := write(f)
+	if err := errors.Join(werr, f.Close()); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/crossben/safe-install/internal/report"
 )
 
 // checkProject writes a one-dependency npm project and a registry fixture in
@@ -216,5 +218,17 @@ func TestCheckSARIFFileAlongsideText(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), `"version": "2.1.0"`) {
 		t.Fatalf("sarif file: %v\n%s", err, data)
+	}
+}
+
+func TestCheckSummaryFile(t *testing.T) {
+	checkProject(t, 2*time.Hour, true)
+	path := filepath.Join(t.TempDir(), "summary.md")
+	if _, err := runCLIOut(t, "check", "--fail-on", "none", "--summary-file", path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.HasPrefix(string(data), report.MarkdownMarker) || !strings.Contains(string(data), "`SI-REC-001`") {
+		t.Fatalf("summary: %v\n%s", err, data)
 	}
 }

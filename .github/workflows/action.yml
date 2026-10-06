@@ -27,6 +27,8 @@ jobs:
         run: |
           echo "outcome=$OUTCOME exit-code=$CODE"
           test "$OUTCOME" = failure && test "$CODE" = 1
+      - name: Expect a summary naming the package
+        run: grep -q '^| ' "$RUNNER_TEMP/safe-install.md" && grep -q '<!-- safe-install-report -->' "$RUNNER_TEMP/safe-install.md"
 
   clean-project:
     runs-on: ubuntu-latest
