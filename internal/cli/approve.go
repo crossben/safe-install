@@ -167,9 +167,15 @@ func newScriptsCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g.format != "text" && g.format != "json" {
+				return fmt.Errorf("unknown --format %q (text, json)", g.format)
+			}
 			cands, _, err := s.candidates()
 			if err != nil {
 				return err
+			}
+			if g.format == "json" {
+				return writeJSON(cmd.OutOrStdout(), scriptsJSON(cands))
 			}
 			w := &lineWriter{w: cmd.OutOrStdout()}
 			if len(cands) == 0 {
@@ -191,7 +197,21 @@ func newExplainCmd() *cobra.Command {
 		Short: "Explain a rule, or list all rules",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			format, _ := cmd.Flags().GetString("format")
+			if format != "text" && format != "json" {
+				return fmt.Errorf("unknown --format %q (text, json)", format)
+			}
 			w := &lineWriter{w: cmd.OutOrStdout()}
+			if format == "json" {
+				if len(args) == 0 {
+					return writeJSON(w.w, explainJSONList(analyze.Explanations()))
+				}
+				e, ok := analyze.Explain(args[0])
+				if !ok {
+					return fmt.Errorf("unknown rule %q; `safe-install explain` lists them", args[0])
+				}
+				return writeJSON(w.w, explainJSON(e))
+			}
 			if len(args) == 0 {
 				for _, e := range analyze.Explanations() {
 					w.printf("%s  %s\n", e.ID, e.Title)

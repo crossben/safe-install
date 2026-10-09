@@ -174,7 +174,7 @@ prompt, also in CI. A user-wide file with the same format lives in your config d
 (`approve --global`); the project file wins on conflicts, and flags win over both.
 
 ```sh
-safe-install scripts              # packages with install scripts and their approval state
+safe-install scripts              # packages with install scripts and their approval state (--format json)
 safe-install approve esbuild      # approve and run now (--revoke, --global, --no-run)
 safe-install add left-pad         # add packages through the same review
 safe-install explain SI-SCR-002   # what a rule means and what to do

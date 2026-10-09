@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -238,5 +239,56 @@ func TestAddCommand(t *testing.T) {
 	got := listMarkers(t, markers)
 	if !slices.Contains(got, "new-dep-postinstall") || slices.Contains(got, "evil-dep-postinstall") {
 		t.Fatalf("markers = %v\n%s", got, out.String())
+	}
+}
+
+func TestScriptsJSON(t *testing.T) {
+	installProject(t)
+	if out, err := runInstallCLI(t, "n\ny\n", true); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	out, err := runCmd(t, "scripts", "--format", "json")
+	if err != nil {
+		t.Fatalf("scripts: %v\n%s", err, out)
+	}
+	var pkgs []struct {
+		ID       string                  `json:"id"`
+		Scripts  map[string]string       `json:"scripts"`
+		Stages   []string                `json:"stages"`
+		Level    string                  `json:"level"`
+		State    string                  `json:"state"`
+		Findings []struct{ Rule string } `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(out), &pkgs); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	got := map[string]string{}
+	for _, p := range pkgs {
+		got[p.ID] = p.Level + " " + p.State
+		if len(p.Stages) == 0 || p.Scripts[p.Stages[0]] == "" {
+			t.Errorf("%s: stages %v do not match scripts %v", p.ID, p.Stages, p.Scripts)
+		}
+	}
+	if got["evil-dep@1.0.0"] != "block unapproved" || got["good-dep@1.0.0"] == "" || !strings.HasSuffix(got["good-dep@1.0.0"], " approved") {
+		t.Fatalf("levels/states = %v", got)
+	}
+	if _, err := runCmd(t, "scripts", "--format", "sarif"); err == nil {
+		t.Fatal("an unsupported format was accepted")
+	}
+}
+
+func TestExplainJSON(t *testing.T) {
+	out, err := runCmd(t, "explain", "SI-SCR-002", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var e struct{ ID, Title, Why, Fix string }
+	if err := json.Unmarshal([]byte(out), &e); err != nil || e.ID != "SI-SCR-002" || e.Why == "" || e.Fix == "" {
+		t.Fatalf("explain json: %v\n%s", err, out)
+	}
+	out, err = runCmd(t, "explain", "--format", "json")
+	var all []struct{ ID string }
+	if err != nil || json.Unmarshal([]byte(out), &all) != nil || len(all) < 20 {
+		t.Fatalf("explain list json: %v\n%s", err, out)
 	}
 }

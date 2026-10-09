@@ -39,6 +39,11 @@ const (
 	ApprovedByProvenance       // scripts changed, but built by the trusted repository's CI
 )
 
+// Key is the state's stable machine-readable name (JSON output).
+func (s State) Key() string {
+	return [...]string{"unapproved", "approved", "changed", "expired", "provenance"}[s]
+}
+
 func (s State) String() string {
 	return [...]string{"not approved", "approved", "changed since approval", "approval expired", "approved by provenance"}[s]
 }
