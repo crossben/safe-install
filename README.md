@@ -240,6 +240,15 @@ how to read the results. Add them to your agent's instructions file:
 safe-install llm >> AGENTS.md      # or CLAUDE.md, .cursorrules, …
 ```
 
+## Editor extension
+
+**safe-install for VS Code** (also Cursor, Windsurf and VSCodium) shows the same results in
+the editor: risky dependencies marked in `package.json` with an explanation on hover, an
+Install Scripts view, and approval through a terminal you can see (never for high-risk
+scripts). It runs the CLI you have installed (0.2.3 or later) and adds no checks of its
+own. Search for "safe-install" in the Extensions view, or see
+[crossben/safe-install-vscode](https://github.com/crossben/safe-install-vscode).
+
 ## Check without installing
 
 ```sh
@@ -268,7 +277,7 @@ count one level below their advisory severity (`npm audit` covers those in depth
 ## GitHub Action
 
 ```yaml
-- uses: crossben/safe-install@v0.2.2
+- uses: crossben/safe-install@v0.2.3
   with:
     working-directory: .   # where package.json and the lockfile are
     fail-on: high          # low, medium, high, block, none
