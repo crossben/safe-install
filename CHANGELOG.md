@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `check` no longer fails at random on a cold cache in large projects ("context deadline
+  exceeded", exit 3). Registry metadata can be tens of megabytes (`next` is about 30 MB)
+  and downloads in parallel; the client now times out on a stalled connection rather than
+  on download size, and retries timeouts, dropped connections, 5xx and 429 twice.
+
 ## 0.2.3
 
 ### Added

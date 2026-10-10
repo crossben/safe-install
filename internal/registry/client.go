@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,7 +42,7 @@ type Fetcher interface {
 type Client struct {
 	Config   *npmrc.Config // registries and credentials; nil uses BaseURL without auth
 	BaseURL  string        // default DefaultURL, when Config is nil
-	HTTP     *http.Client  // default: 30s timeout
+	HTTP     *http.Client  // default: defaultHTTP
 	CacheDir string        // "" disables the cache
 	Offline  bool          // serve from cache only
 
@@ -53,7 +54,8 @@ type cacheEntry struct {
 	Body json.RawMessage `json:"body"`
 }
 
-// Packument fetches the full document for name.
+// Packument fetches the full document for name. Transient failures (timeouts,
+// dropped connections, 5xx, 429) are retried with a short backoff.
 func (c *Client) Packument(ctx context.Context, name string) (*Packument, error) {
 	u := c.url(name)
 	cached, _ := c.readCache(u)
@@ -63,6 +65,41 @@ func (c *Client) Packument(ctx context.Context, name string) (*Packument, error)
 		}
 		return decode(cached.Body)
 	}
+	var err error
+	for attempt := 0; ; attempt++ {
+		var p *Packument
+		p, err = c.fetchPackument(ctx, name, u, cached)
+		if err == nil || attempt == maxRetries || !retryable(ctx, err) {
+			return p, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(time.Duration(attempt+1) * retryDelay):
+		}
+	}
+}
+
+// Retries of a failed registry request, and the base delay between them.
+const maxRetries = 2
+
+var retryDelay = 500 * time.Millisecond
+
+// errTransient marks a response worth retrying (5xx, 429).
+var errTransient = errors.New("temporary registry error")
+
+func retryable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false // cancelled by the caller
+	}
+	if errors.Is(err, errTransient) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) // timeouts, resets, refused connections
+}
+
+func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cacheEntry) (*Packument, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -93,6 +130,8 @@ func (c *Client) Packument(ctx context.Context, name string) (*Packument, error)
 		return nil, fmt.Errorf("%s: %w", name, ErrNotFound)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, fmt.Errorf("%s: %w (%s)", name, ErrUnauthorized, resp.Status)
+	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
+		return nil, fmt.Errorf("%s: registry returned %s: %w", name, resp.Status, errTransient)
 	case resp.StatusCode != http.StatusOK:
 		return nil, fmt.Errorf("%s: registry returned %s", name, resp.Status)
 	}
@@ -131,11 +170,28 @@ func (c *Client) url(name string) string {
 	return strings.TrimSuffix(base, "/") + "/" + url.PathEscape(name)
 }
 
+// defaultHTTP times out on silence rather than size: a full packument can be
+// tens of megabytes (next is ~30 MB), and many download at once, so a short
+// whole-request timeout fails at random on a cold cache. Connecting and the
+// response headers must be quick; the body gets a generous overall cap.
+var defaultHTTP = &http.Client{
+	Timeout: 5 * time.Minute,
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+	},
+}
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return defaultHTTP
 }
 
 func (c *Client) cachePath(u string) string {
