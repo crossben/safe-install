@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 
@@ -95,4 +97,51 @@ func ComposerDist(data []byte) ([]analyze.Finding, error) {
 		return nil, fmt.Errorf("reading Composer dist: %w", err)
 	}
 	return c.findings(), nil
+}
+
+// ComposerInstalled scans the PHP files of a package installed in dir (a
+// vendor/<name> directory), minus tests and docs, reading through os.Root.
+func ComposerInstalled(dir string) []analyze.Finding {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = root.Close() }()
+	c := &collector{byRule: map[string]*agg{}}
+	fsys := root.FS()
+	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != "." && (notInstalled(p) || d.Name() == "vendor" || d.Name() == ".git") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(p), ".php") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
+			return nil
+		}
+		data, err := readCapped(fsys, p)
+		if err != nil {
+			return nil
+		}
+		if c.total += int64(len(data)); c.total > maxPackageBytes {
+			return fs.SkipAll
+		}
+		for _, h := range scanPHP(string(data)) {
+			a := c.byRule[h.rule]
+			if a == nil {
+				a = &agg{sev: h.sev, files: map[string]string{}}
+				c.byRule[h.rule] = a
+			}
+			a.files[p] = h.what
+		}
+		return nil
+	})
+	return c.findings()
 }

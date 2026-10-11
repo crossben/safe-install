@@ -301,8 +301,24 @@ safe-install check --deep     # in a folder with composer.lock
 safe-install why psr/log
 ```
 
-Packages from repositories listed in `composer.json` are skipped, never contacted. Installing
-Composer projects comes next. The Packagist popularity list comes from
+**Installing with Composer.** Dependencies' scripts never run in Composer; what does is
+**plugins**. `safe-install install` runs `composer install --no-scripts` (your project's own
+scripts are reported, not run) with only the plugins you approved enabled, each pinned to its
+commit. It points Composer at a temporary copy of `composer.json` whose `allow-plugins` lists
+exactly those plugins, even if your own `composer.json` allows more, so your files are never
+edited. `safe-install add` refuses versions younger than `--min-age` and restores
+`composer.json` and `composer.lock`. `safe-install scan` scans the PHP code in `vendor/`.
+
+```sh
+safe-install install                        # composer install, scripts off, approved plugins only
+safe-install approve php-http/discovery     # review and approve a plugin (pinned to its commit)
+safe-install add symfony/http-client        # composer require, with the release-age gate
+```
+
+`safe-install approve` works the same way for Python: it approves building a package from
+source, pinned to that sdist's sha256.
+
+Packages from repositories listed in `composer.json` are skipped, never contacted. The Packagist popularity list comes from
 [ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
 
 ## Editor extension

@@ -43,7 +43,7 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI, ecosystem.Packagist)
 	if err != nil {
 		return err
 	}
@@ -66,6 +66,12 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 			}
 			installed[id] = d.site
 			code[id] = codescan.PythonInstalled(d.site, d.name, d.files)
+		}
+	} else if det.Ecosystem() == ecosystem.Packagist {
+		installed, code = map[string]string{}, map[string][]analyze.Finding{}
+		for id, pdir := range composerInstalled(dir) {
+			installed[id] = pdir
+			code[id] = codescan.ComposerInstalled(pdir)
 		}
 	} else {
 		installed = scripts.Installed(dir)

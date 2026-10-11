@@ -102,7 +102,7 @@ func runPythonInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add b
 		if data, ok := before[lockPath]; ok && data != nil {
 			old, _ = lockfile.Parse("uv.lock", data, dir)
 		}
-		if fresh := freshVersions(cmd, g, pol, lockfile.Changed(old, graph)); len(fresh) > 0 {
+		if fresh := freshVersions(cmd, g, pol, lockfile.Changed(old, graph), ecosystem.PyPI); len(fresh) > 0 {
 			before.restore()
 			w.printf("safe-install: these versions are younger than %s, so nothing was changed or installed:\n", g.minAge)
 			for _, f := range fresh {
@@ -438,17 +438,17 @@ func (s fileSnapshot) restore() {
 
 // freshVersions returns the new or changed packages published less than
 // --min-age ago (SI-REC-001), as "name@version (published 5h ago)".
-func freshVersions(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, changed *lockfile.Graph) []string {
+func freshVersions(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, changed *lockfile.Graph, e ecosystem.Ecosystem) []string {
 	if len(changed.Packages) == 0 {
 		return nil
 	}
 	minAge, _ := parseMinAge(g.minAge)
-	fetcher, err := newFetcherFor(g, ecosystem.PyPI)
+	fetcher, err := newFetcherFor(g, e)
 	if err != nil {
 		return nil
 	}
 	cfg := analysisConfig(g, pol, minAge)
-	cfg.RegistryHosts, cfg.Downloads, cfg.OSV = pypiHosts(), nil, nil
+	cfg.RegistryHosts, cfg.Downloads, cfg.OSV = nil, nil, nil
 	rep := analyze.Analyze(cmd.Context(), changed, fetcher, cfg)
 	var out []string
 	for _, r := range rep.Results {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/ecosystem"
+	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/scripts"
 )
@@ -24,6 +27,11 @@ func newApproveCmd(g *globalFlags) *cobra.Command {
 			"then runs them. A later change to the scripts needs a new approval.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, names []string) error {
+			if dir, err := os.Getwd(); err == nil {
+				if det, err := pm.Detect(dir, g.pm); err == nil && det.Ecosystem() != ecosystem.NPM {
+					return approveOther(cmd, g, dir, det.Ecosystem(), names, approveFlags{revoke, global, force, trust, expires})
+				}
+			}
 			s, err := newSession(cmd, g)
 			if err != nil {
 				return err

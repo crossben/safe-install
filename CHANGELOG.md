@@ -23,6 +23,12 @@
   OSV: abandoned packages, fresh releases, typosquats of popular Composer packages, commit
   integrity (`SI-INT-001`), Composer plugins (`SI-PLG-001`), and with `--deep`, a scan of
   each dist's PHP code.
+- **Composer installs**: `install`, `add` and `scan` for `composer.lock` projects. Scripts
+  off; only approved plugins load (pinned to their commit), through a temporary
+  `composer.json` copy, so the project's files are never edited; fresh versions refused on
+  `add` with an exact restore.
+- `approve` works for Python (approve a source build, pinned to the sdist's sha256) and
+  Composer (approve a plugin, pinned to its commit).
 - Advisories published by several databases (GitHub's GHSA and PyPI's PYSEC) are reported
   once.
 
