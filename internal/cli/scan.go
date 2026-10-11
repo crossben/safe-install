@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/codescan"
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/report"
 	"github.com/crossben/safe-install/internal/scripts"
@@ -41,10 +43,11 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	if _, err := detectSupported(dir, g.pm); err != nil {
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	if err != nil {
 		return err
 	}
-	path, err := lockfile.Find(dir)
+	path, err := lockfile.FindFor(dir, det.Ecosystem())
 	if err != nil {
 		return err
 	}
@@ -52,8 +55,22 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	installed := scripts.Installed(dir)
-	code := codeFindings(cmd, g, installed, graph)
+	var installed map[string]string
+	var code map[string][]analyze.Finding
+	if det.Ecosystem() == ecosystem.PyPI {
+		installed, code = map[string]string{}, map[string][]analyze.Finding{}
+		project := projectName(dir)
+		for id, d := range pyInstalled(dir) {
+			if d.name == project {
+				continue
+			}
+			installed[id] = d.site
+			code[id] = codescan.PythonInstalled(d.site, d.name, d.files)
+		}
+	} else {
+		installed = scripts.Installed(dir)
+		code = codeFindings(cmd, g, installed, graph)
+	}
 
 	// Only packages unpacked on disk were scanned; the rest (other platforms'
 	// optional binaries, Plug'n'Play zips) are counted as skipped.

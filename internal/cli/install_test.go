@@ -39,8 +39,7 @@ func TestInstallRejectsPositionalArgs(t *testing.T) {
 
 func TestOtherEcosystemsSayNotSupportedYet(t *testing.T) {
 	for file, commands := range map[string][][]string{
-		"uv.lock":       {{"install"}, {"scan"}}, // check and why support Python
-		"composer.lock": {{"check"}, {"install"}, {"why", "x"}, {"scan"}},
+		"composer.lock": {{"check"}, {"install"}, {"why", "x"}, {"scan"}}, // Python is supported
 	} {
 		dir := t.TempDir()
 		t.Chdir(dir)

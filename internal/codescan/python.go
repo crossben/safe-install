@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -314,4 +315,43 @@ func walkTarGz(data []byte, visit visitFunc) error {
 		}
 	}
 	return nil
+}
+
+// Pth checks one .pth file installed by package owner (normalized name).
+func Pth(owner, file, src string) []analyze.Finding {
+	var out []analyze.Finding
+	for _, h := range scanPth(owner, file, src) {
+		out = append(out, analyze.Finding{Rule: h.rule, Severity: h.sev, Message: fmt.Sprintf("%s installs %s, which %s", owner, path.Base(file), h.what)})
+	}
+	return out
+}
+
+// PythonInstalled scans the files one installed distribution lists in its
+// RECORD (paths relative to site-packages), reading through os.Root so
+// nothing outside site can be opened. pkg is the normalized project name.
+func PythonInstalled(site, pkg string, files []string) []analyze.Finding {
+	root, err := os.OpenRoot(site)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = root.Close() }()
+	c := pyCollector{&collector{byRule: map[string]*agg{}}, pkg}
+	for _, f := range files {
+		rel, ok := safeRel(f)
+		if !ok || (!strings.HasSuffix(rel, ".py") && !strings.HasSuffix(rel, ".pth")) {
+			continue
+		}
+		info, err := root.Lstat(rel)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
+			continue
+		}
+		data, err := readCapped(root.FS(), rel)
+		if err != nil {
+			continue
+		}
+		if !c.add(rel, data, false) {
+			break
+		}
+	}
+	return c.findings()
 }

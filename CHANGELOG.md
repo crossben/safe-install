@@ -13,6 +13,12 @@
 - **Python build code**: `SI-BLD-001` (no wheel, so installing runs build code); with
   `check --deep`, `SI-BLD-002` (build code that downloads, evaluates or reads secrets),
   `SI-PTH-001` (`.pth` files that run code at startup) and `SI-CODE-001..003` for Python.
+- **Python installs with uv**: `install`, `add` and `scan` for `uv.lock` projects. Wheels
+  only; packages that must build from source are analyzed and need approval, pinned to the
+  sdist's sha256. New versions younger than `--min-age` are refused and `pyproject.toml`
+  and `uv.lock` restored. `.pth` files that run code are reported after install.
+- Packages from configured non-PyPI indexes are skipped (never contacted) instead of being
+  reported as unpublished.
 - Advisories published by several databases (GitHub's GHSA and PyPI's PYSEC) are reported
   once.
 

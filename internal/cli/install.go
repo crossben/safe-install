@@ -120,6 +120,15 @@ func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
 }
 
 func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) error {
+	if dir, err := os.Getwd(); err == nil {
+		if det, err := pm.Detect(dir, g.pm); err == nil && det.Ecosystem() == ecosystem.PyPI {
+			pol, err := loadPolicy(cmd, g)
+			if err != nil {
+				return err
+			}
+			return runPythonInstall(cmd, g, pmArgs, add, pol, dir, det)
+		}
+	}
 	s, err := newSession(cmd, g)
 	if err != nil {
 		return err

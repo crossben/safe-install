@@ -261,9 +261,29 @@ evaluates or reads secrets (`SI-BLD-002`), `.pth` files that run code at every P
 (`SI-PTH-001`), and the code-scan rules applied to Python source. Archives are verified against
 PyPI's sha256 and the lockfile's hashes, and scanned in memory.
 
-Installing (wheels only, with build scripts reviewed like install scripts) comes next.
-Private package indexes are not read yet. The PyPI popularity list comes from
-[ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
+**Installing with uv.** In a project with `uv.lock`, `safe-install install` and
+`safe-install add` install from wheels only: building a source distribution runs its build
+code, so a package that has to be built is analyzed first (registry rules and a scan of its
+build code) and built only once you approve it, pinned to that sdist's sha256. Every other
+package is passed to uv as `--no-build-package`, whatever platform you are on.
+
+```sh
+safe-install install          # uv lock (if needed), then uv sync --locked, wheels only
+safe-install add httpx        # uv add, refused if it resolves a version younger than --min-age
+safe-install scan             # scan the code installed in .venv
+```
+
+The release-age gate checks every new or changed version against PyPI and, if one is too
+fresh, restores `pyproject.toml` and `uv.lock` and installs nothing. (uv's own
+`--exclude-newer` is not used: uv writes it into `uv.lock`.) After installing, `.pth` files
+that run code at every Python start are reported with the package that installed them. Your
+own project is still installed by uv as usual. pip, Poetry and Pipenv projects can be
+checked; installing them is not supported yet.
+
+Packages from other indexes configured for the project (`[[tool.uv.index]]`, `uv.toml`,
+Pipfile sources, `--index-url` lines, `UV_*`/`PIP_*` variables) are not looked up on PyPI and
+are listed as skipped; safe-install never contacts those indexes. The PyPI popularity list
+comes from [ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
 
 ## Editor extension
 

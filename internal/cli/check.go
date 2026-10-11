@@ -92,8 +92,13 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		graph = lockfile.Changed(base, graph)
 	}
 	cfg := analysisConfig(g, pol, minAge)
+	var otherIndexes string
 	if det.Ecosystem() == ecosystem.PyPI {
-		cfg.RegistryHosts = pypiHosts()
+		indexHosts := pythonIndexHosts(dir, os.Getenv)
+		if n, hosts := otherIndexPackages(graph, indexHosts); n > 0 {
+			otherIndexes = fmt.Sprintf("%d package(s) come from other package indexes (%s) and were not checked against PyPI", n, strings.Join(hosts, ", "))
+		}
+		cfg.RegistryHosts = append(pypiHosts(), indexHosts...)
 		cfg.Popular = popularity.For(ecosystem.PyPI)
 		cfg.Downloads = nil // npm's download counts API
 		if p, ok := fetcher.(*registry.PyPI); ok {
@@ -105,6 +110,9 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	rep := analyze.Analyze(cmd.Context(), graph, fetcher, cfg)
 	bar.Stop()
 	rep.Base = diff
+	if otherIndexes != "" {
+		rep.Warnings = append(rep.Warnings, otherIndexes)
+	}
 	if deep {
 		deepScan(cmd, g, rep)
 	}
