@@ -6,6 +6,9 @@
 It analyzes your whole dependency tree from the lockfile, installs with lifecycle scripts
 disabled, shows you every package that wants to run a script, and runs only the ones you
 approved. Linux, macOS and Windows; single static binary.
+It also covers **Python** (uv, pip, Poetry, Pipenv: source builds need approval) and
+**PHP** (Composer: plugins need approval); see [Python](#python-preview) and
+[PHP / Composer](#php--composer-preview).
 
 ## How it works
 
@@ -24,6 +27,9 @@ approved. Linux, macOS and Windows; single static binary.
 | Yarn classic | `yarn.lock` (v1) | `yarn install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
 | Yarn berry | `yarn.lock` (v2+) | `yarn install --mode=skip-build` | `npm run <stage> --ignore-scripts` in `.yarn/unplugged`, with `.pnp.cjs` preloaded |
 | bun | `bun.lock` | `bun install --ignore-scripts` | `npm run <stage> --ignore-scripts` in the package directory |
+| uv | `uv.lock` | `uv sync --locked` with every unapproved package in `--no-build-package` | uv builds only the approved source distributions |
+| pip, Poetry, Pipenv | `requirements.txt`, `poetry.lock`, `Pipfile.lock` | `check` and `why` only (installing: not yet) | |
+| Composer | `composer.lock` | `composer install --no-scripts` | only approved plugins load (`allow-plugins`) |
 
 The package manager is detected from the lockfile, then the `packageManager` field in
 `package.json` (`--pm` overrides both). When `packageManager` pins pnpm or Yarn,
@@ -358,7 +364,7 @@ count one level below their advisory severity (`npm audit` covers those in depth
 ## GitHub Action
 
 ```yaml
-- uses: crossben/safe-install@v0.2.3
+- uses: crossben/safe-install@v0.3.0
   with:
     working-directory: .   # where package.json and the lockfile are
     fail-on: high          # low, medium, high, block, none

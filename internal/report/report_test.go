@@ -107,3 +107,20 @@ func TestFindLine(t *testing.T) {
 		}
 	}
 }
+
+func TestFindLineOtherLockfiles(t *testing.T) {
+	cases := []struct {
+		data, name, version string
+		want                int
+	}{
+		{"version = 1\n\n[[package]]\nname = \"flask\"\nversion = \"3.0.3\"\n", "flask", "3.0.3", 4},
+		{"# hdr\nblinker==1.9.0 \\\n    --hash=sha256:aa\nZope.Interface == 6.0\n", "zope-interface", "6.0", 4},
+		{"{\n    \"packages\": [\n        {\n            \"name\": \"monolog/monolog\",\n            \"version\": \"3.7.0\",\n", "monolog/monolog", "3.7.0", 4},
+		{"{\n  \"default\": {\n    \"flask\": {\n      \"version\": \"==3.0.3\"\n", "flask", "3.0.3", 3},
+	}
+	for _, c := range cases {
+		if got := findLine([]byte(c.data), c.name, c.version); got != c.want {
+			t.Errorf("%s@%s: line %d, want %d", c.name, c.version, got, c.want)
+		}
+	}
+}

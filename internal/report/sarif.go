@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"regexp"
+	"strings"
 
 	"github.com/crossben/safe-install/internal/analyze"
 )
@@ -106,6 +108,25 @@ func findLine(data []byte, name, version string) int {
 	for _, needle := range []string{`"node_modules/` + name + `"`, name + "@" + version} {
 		if i := bytes.Index(data, []byte(needle)); i >= 0 {
 			return bytes.Count(data[:i], []byte("\n")) + 1
+		}
+	}
+	// Python and Composer lockfiles. Python names may be spelled with any
+	// case and any of "-", "_" or "." in requirements files.
+	n := regexp.QuoteMeta(name)
+	py := `(?i)` + strings.NewReplacer(`\-`, `[-_.]`, `\.`, `[-_.]`, `_`, `[-_.]`, "-", `[-_.]`).Replace(n)
+	v := regexp.QuoteMeta(version)
+	for _, pattern := range []string{
+		`(?m)^name = "` + n + `"\s*\nversion = "` + v + `"`,      // uv.lock, poetry.lock
+		`"name": "` + n + `",\s*\n\s*"version": "` + v + `"`,     // composer.lock
+		`(?m)^\s*` + py + `(?:\[[^\]]*\])?\s*===?\s*` + v + `\b`, // requirements.txt
+		`(?m)^\s*"` + py + `": \{`,                               // Pipfile.lock
+	} {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			continue
+		}
+		if loc := re.FindIndex(data); loc != nil {
+			return bytes.Count(data[:loc[0]], []byte("\n")) + 1
 		}
 	}
 	return 1

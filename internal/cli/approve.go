@@ -171,12 +171,17 @@ func newScriptsCmd(g *globalFlags) *cobra.Command {
 		Short: "List installed packages with install scripts and their approval state",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if g.format != "text" && g.format != "json" {
+				return fmt.Errorf("unknown --format %q (text, json)", g.format)
+			}
+			if dir, err := os.Getwd(); err == nil {
+				if det, err := pm.Detect(dir, g.pm); err == nil && det.Ecosystem() != ecosystem.NPM {
+					return scriptsOther(cmd, g, dir, det.Ecosystem())
+				}
+			}
 			s, err := newSession(cmd, g)
 			if err != nil {
 				return err
-			}
-			if g.format != "text" && g.format != "json" {
-				return fmt.Errorf("unknown --format %q (text, json)", g.format)
 			}
 			cands, _, err := s.candidates()
 			if err != nil {

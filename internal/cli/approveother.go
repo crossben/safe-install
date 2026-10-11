@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -123,4 +124,82 @@ func assessOne(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, e ecosyst
 		return analyze.Result{Package: p}, nil
 	}
 	return rep.Results[0], nil
+}
+
+// scriptsOther lists what runs code during a Python or Composer install and
+// needs approval: packages that must be built from source (no wheel), and
+// Composer plugins. Same output shapes as for npm install scripts.
+func scriptsOther(cmd *cobra.Command, g *globalFlags, dir string, e ecosystem.Ecosystem) error {
+	pol, err := loadPolicy(cmd, g)
+	if err != nil {
+		return err
+	}
+	path, err := lockfile.FindFor(dir, e)
+	if err != nil {
+		return err
+	}
+	graph, err := lockfile.LoadFile(path)
+	if err != nil {
+		return err
+	}
+	var items []jsonScriptsPackage
+	for _, p := range graph.Sorted() {
+		var hash, stage, what string
+		switch {
+		case e == ecosystem.PyPI:
+			sha, ok := sdistOnly(p)
+			if !ok {
+				continue
+			}
+			hash, stage, what = "sha256:"+sha, "build", "builds the source distribution (setup.py / build backend)"
+		case e == ecosystem.Packagist && p.Plugin && p.Ref != "":
+			hash, stage, what = "ref:"+p.Ref, "plugin", "Composer plugin: runs inside Composer"
+		default:
+			continue
+		}
+		res, err := assessOne(cmd, g, pol, e, p)
+		if err != nil {
+			return err
+		}
+		state := "unapproved"
+		if a, _, ok := pol.Lookup(p.Name); ok {
+			switch {
+			case a.Hash != hash:
+				state = "changed"
+			case a.Expired(time.Now()):
+				state = "expired"
+			default:
+				state = "approved"
+			}
+		}
+		item := jsonScriptsPackage{
+			ID: p.ID, Name: p.Name, Version: p.Version, Direct: p.Direct, Dev: p.Dev,
+			Scripts: map[string]string{stage: what}, Stages: []string{stage},
+			Level: res.Level.String(), State: state, Findings: []jsonFinding{},
+		}
+		for _, f := range res.Findings {
+			item.Findings = append(item.Findings, jsonFinding{f.Rule, f.Severity.String(), f.Message})
+		}
+		items = append(items, item)
+	}
+	if g.format == "json" {
+		if items == nil {
+			items = []jsonScriptsPackage{}
+		}
+		return writeJSON(cmd.OutOrStdout(), items)
+	}
+	w := &lineWriter{w: cmd.OutOrStdout()}
+	if len(items) == 0 {
+		w.printf("Nothing in this project runs code during install that needs approval.\n")
+		return w.err
+	}
+	for _, it := range items {
+		w.printf("\n%s  risk: %s  %s\n  %s: %s\n", it.ID, strings.ToUpper(it.Level), it.State, it.Stages[0], it.Scripts[it.Stages[0]])
+		for _, f := range it.Findings {
+			if f.Rule != "SI-BLD-001" && f.Rule != "SI-PLG-001" {
+				w.printf("  ! %s  %s\n", f.Rule, f.Message)
+			}
+		}
+	}
+	return w.err
 }

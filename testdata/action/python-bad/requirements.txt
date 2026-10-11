@@ -1,0 +1,2 @@
+# A typosquat of "requests" (SI-POP-001): the action must fail.
+reqeusts==2.28.1
