@@ -19,6 +19,10 @@
   and `uv.lock` restored. `.pth` files that run code are reported after install.
 - Packages from configured non-PyPI indexes are skipped (never contacted) instead of being
   reported as unpublished.
+- **PHP / Composer (preview): `check` and `why`** for `composer.lock` against Packagist and
+  OSV: abandoned packages, fresh releases, typosquats of popular Composer packages, commit
+  integrity (`SI-INT-001`), Composer plugins (`SI-PLG-001`), and with `--deep`, a scan of
+  each dist's PHP code.
 - Advisories published by several databases (GitHub's GHSA and PyPI's PYSEC) are reported
   once.
 

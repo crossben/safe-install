@@ -285,6 +285,26 @@ Pipfile sources, `--index-url` lines, `UV_*`/`PIP_*` variables) are not looked u
 are listed as skipped; safe-install never contacts those indexes. The PyPI popularity list
 comes from [ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
 
+## PHP / Composer (preview)
+
+`safe-install check` and `safe-install why` work on Composer projects (`composer.lock`),
+against Packagist and OSV: malware and vulnerabilities, abandoned packages (with Packagist's
+suggested replacement), fresh releases (when Packagist first saw them), names that imitate
+popular packages (`symfoni/console`), and **Composer plugins** (`SI-PLG-001`), whose code runs
+inside Composer on every command. Composer dists from GitHub carry no checksum, so integrity
+is anchored on the commit: the lockfile must pin the commit Packagist serves for that version
+(`SI-INT-001`). `check --deep` downloads each dist (the zipball of exactly that commit) and
+scans its PHP code, including `eval(gzinflate(base64_decode(…)))`-style payloads.
+
+```sh
+safe-install check --deep     # in a folder with composer.lock
+safe-install why psr/log
+```
+
+Packages from repositories listed in `composer.json` are skipped, never contacted. Installing
+Composer projects comes next. The Packagist popularity list comes from
+[ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
+
 ## Editor extension
 
 **safe-install for VS Code** (also Cursor, Windsurf and VSCodium) shows the same results in

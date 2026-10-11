@@ -34,6 +34,12 @@ type VersionMeta struct {
 	Files []DistFile `json:"-"`
 	// Yanked (PyPI): every file of the version was pulled; Deprecated holds the reason.
 	Yanked bool `json:"-"`
+	// Abandoned (Packagist): the package is abandoned; Deprecated names the replacement, if any.
+	Abandoned bool `json:"-"`
+	// Ref (Packagist): the commit this version's dist points at.
+	Ref string `json:"-"`
+	// Plugin (Packagist): type composer-plugin.
+	Plugin bool `json:"-"`
 }
 
 // DistFile is one downloadable file of a version (PyPI).

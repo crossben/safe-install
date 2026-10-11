@@ -185,7 +185,7 @@ func appliesTo(r Rule, e ecosystem.Ecosystem) bool {
 
 // Rules is the default rule set.
 var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{},
-	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}, buildRule{}}
+	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}, buildRule{}, pluginRule{}}
 
 // Analyze fetches metadata for every registry package in g and runs the rules.
 func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Config) *Report {
@@ -405,6 +405,9 @@ func Score(findings []Finding) (int, Level) {
 // file, link or tarball reference.
 func fromRegistry(p *lockfile.Package) bool {
 	v := p.Version
+	if p.Ecosystem == ecosystem.Packagist && len(v) > 1 && (v[0] == 'v' || v[0] == 'V') && v[1] >= '0' && v[1] <= '9' {
+		v = v[1:] // Composer tags: v7.4.0 is a release; dev-main is a branch
+	}
 	if v == "" || v[0] < '0' || v[0] > '9' || strings.ContainsAny(v, ":/#") {
 		return false
 	}

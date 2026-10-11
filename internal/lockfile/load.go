@@ -30,7 +30,8 @@ var names = []string{
 
 // Lockfiles of other ecosystems, by ecosystem, in priority order.
 var otherNames = map[ecosystem.Ecosystem][]string{
-	ecosystem.PyPI: {"uv.lock", "poetry.lock", "Pipfile.lock", "requirements.txt"},
+	ecosystem.PyPI:      {"uv.lock", "poetry.lock", "Pipfile.lock", "requirements.txt"},
+	ecosystem.Packagist: {"composer.lock"},
 }
 
 // FindFor returns the lockfile in dir for ecosystem e (npm: as Find).
@@ -109,6 +110,8 @@ func parseAny(name string, data []byte, dir string) (*Graph, error) {
 		return parsePipenv(data, dir)
 	case "requirements.txt":
 		return parseRequirements(data, dir)
+	case "composer.lock":
+		return parseComposer(data, dir)
 	case "bun.lockb":
 		return nil, ErrBinaryLockfile
 	case "npm-shrinkwrap.json", "package-lock.json":

@@ -17,6 +17,9 @@ var topTxt string
 //go:embed top-pypi.txt
 var topPyPITxt string
 
+//go:embed top-packagist.txt
+var topPackagistTxt string
+
 // typosquatTargets is how many of the most popular names are protected.
 const typosquatTargets = 1000
 
@@ -24,11 +27,15 @@ const typosquatTargets = 1000
 type List struct {
 	names []string
 	rank  map[string]int
+	// slashNames: every name is "vendor/name" (Composer), compared whole.
+	slashNames bool
 }
 
 var (
 	npmList  = sync.OnceValue(func() *List { return parse(topTxt, ecosystem.NPM) })
 	pypiList = sync.OnceValue(func() *List { return parse(topPyPITxt, ecosystem.PyPI) })
+	// Composer names are all "vendor/name": typosquats are compared whole.
+	packagistList = sync.OnceValue(func() *List { l := parse(topPackagistTxt, ecosystem.Packagist); l.slashNames = true; return l })
 )
 
 // Default returns the embedded npm list.
@@ -41,6 +48,8 @@ func For(e ecosystem.Ecosystem) *List {
 		return npmList()
 	case ecosystem.PyPI:
 		return pypiList()
+	case ecosystem.Packagist:
+		return packagistList()
 	}
 	return nil
 }
@@ -82,13 +91,13 @@ func (l *List) Rank(name string) (int, bool) {
 // (insertion, deletion, substitution or swap). Popular names and scoped
 // names are never flagged; short targets are skipped as too ambiguous.
 func (l *List) Typosquat(name string) (string, bool) {
-	if l.Popular(name) || strings.Contains(name, "/") {
+	if l.Popular(name) || (!l.slashNames && strings.Contains(name, "/")) {
 		return "", false
 	}
 	lower := strings.ToLower(name)
 	norm := normalize(lower)
 	for _, t := range l.names[:min(typosquatTargets, len(l.names))] {
-		if len(t) < 4 || strings.Contains(t, "/") {
+		if len(t) < 4 || (!l.slashNames && strings.Contains(t, "/")) {
 			continue
 		}
 		if normalize(t) == norm {

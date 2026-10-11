@@ -26,6 +26,8 @@ const (
 	Poetry       Format = "poetry"       // poetry.lock
 	Pipenv       Format = "pipenv"       // Pipfile.lock
 	Requirements Format = "requirements" // requirements.txt with pinned versions (pip)
+
+	Composer Format = "composer" // composer.lock
 )
 
 // File is one distribution file a lockfile allows for a package (Python:
@@ -49,6 +51,8 @@ type Package struct {
 
 	Ecosystem ecosystem.Ecosystem // where the package comes from (npm for every JavaScript lockfile)
 	Files     []File              // Python: the distribution files the lockfile pins
+	Ref       string              // Composer: the commit the lockfile pins (dist or source reference)
+	Plugin    bool                // Composer: a plugin (type composer-plugin), whose code runs in Composer
 
 	Dependencies []string // IDs, sorted
 }

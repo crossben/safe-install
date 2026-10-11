@@ -42,7 +42,7 @@ func runWhy(cmd *cobra.Command, g *globalFlags, query string) error {
 	if err != nil {
 		return err
 	}
-	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI, ecosystem.Packagist)
 	if err != nil {
 		return err
 	}
@@ -54,10 +54,12 @@ func runWhy(cmd *cobra.Command, g *globalFlags, query string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	if name, version, ok := strings.Cut(query, "@"); ok && det.Ecosystem() == ecosystem.PyPI {
-		query = ecosystem.Normalize(ecosystem.PyPI, name) + "@" + version
-	} else if det.Ecosystem() == ecosystem.PyPI {
-		query = ecosystem.Normalize(ecosystem.PyPI, query)
+	if e := det.Ecosystem(); e != ecosystem.NPM {
+		if name, version, ok := strings.Cut(query, "@"); ok {
+			query = ecosystem.Normalize(e, name) + "@" + version
+		} else {
+			query = ecosystem.Normalize(e, query)
+		}
 	}
 	found := graph.Find(query)
 	if len(found) == 0 {

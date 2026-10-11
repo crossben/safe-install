@@ -65,7 +65,7 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	if err != nil {
 		return err
 	}
-	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI, ecosystem.Packagist)
 	if err != nil {
 		return err
 	}
@@ -104,6 +104,15 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		if p, ok := fetcher.(*registry.PyPI); ok {
 			cfg.Provenance = p
 		}
+	}
+	if det.Ecosystem() == ecosystem.Packagist {
+		repoHosts := composerRepositoryHosts(dir)
+		if n, hosts := otherIndexPackages(graph, repoHosts); n > 0 {
+			otherIndexes = fmt.Sprintf("%d package(s) come from other Composer repositories (%s) and were not checked against Packagist", n, strings.Join(hosts, ", "))
+		}
+		cfg.RegistryHosts = append(composerHosts(), repoHosts...)
+		cfg.Popular = popularity.For(ecosystem.Packagist)
+		cfg.Downloads = nil
 	}
 	bar := startProgress(cmd, g, "Checking packages", 0)
 	cfg.Progress = bar.Set
@@ -228,6 +237,12 @@ func repoRelative(path string) string {
 
 // newFetcherFor returns the registry client for an ecosystem.
 func newFetcherFor(g *globalFlags, e ecosystem.Ecosystem) (registry.Fetcher, error) {
+	if e == ecosystem.Packagist {
+		return &registry.Packagist{
+			Client:  &registry.Client{CacheDir: registry.DefaultCacheDir(), Offline: g.offline},
+			BaseURL: os.Getenv("SAFE_INSTALL_PACKAGIST_URL"), // tests; default repo.packagist.org
+		}, nil
+	}
 	if e != ecosystem.PyPI {
 		return newFetcher(g)
 	}
@@ -235,6 +250,16 @@ func newFetcherFor(g *globalFlags, e ecosystem.Ecosystem) (registry.Fetcher, err
 		Client:  &registry.Client{CacheDir: registry.DefaultCacheDir(), Offline: g.offline},
 		BaseURL: os.Getenv("SAFE_INSTALL_PYPI_URL"), // tests; default pypi.org
 	}, nil
+}
+
+// composerHosts are where Composer dists may come from (SI-INT-002):
+// Packagist and the code hosts it serves dists from.
+func composerHosts() []string {
+	hosts := []string{"repo.packagist.org", "packagist.org", "api.github.com", "codeload.github.com", "github.com", "gitlab.com", "bitbucket.org"}
+	if u, err := url.Parse(os.Getenv("SAFE_INSTALL_PACKAGIST_URL")); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, u.Hostname())
+	}
+	return hosts
 }
 
 // pypiHosts are where Python packages may come from (SI-INT-002).

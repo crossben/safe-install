@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -124,4 +125,46 @@ func otherIndexPackages(g *lockfile.Graph, indexHosts []string) (int, []string) 
 	}
 	slices.Sort(seen)
 	return n, seen
+}
+
+// composerRepositoryHosts returns the hosts of the repositories composer.json
+// adds besides Packagist (vcs, composer, artifact…). They count as configured
+// and their packages are not looked up on Packagist; safe-install never
+// contacts them.
+func composerRepositoryHosts(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "composer.json")) // #nosec G304 -- the project's manifest
+	if err != nil {
+		return nil
+	}
+	var manifest struct {
+		Repositories json.RawMessage `json:"repositories"`
+	}
+	if json.Unmarshal(data, &manifest) != nil || len(manifest.Repositories) == 0 {
+		return nil
+	}
+	// repositories is a list, or an object keyed by name.
+	var list []struct {
+		URL string `json:"url"`
+	}
+	if json.Unmarshal(manifest.Repositories, &list) != nil {
+		var byName map[string]struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(manifest.Repositories, &byName) == nil {
+			for _, r := range byName {
+				list = append(list, r)
+			}
+		}
+	}
+	var hosts []string
+	for _, r := range list {
+		u, err := url.Parse(r.URL)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		if h := strings.ToLower(u.Hostname()); !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
 }

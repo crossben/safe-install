@@ -2,11 +2,13 @@ package analyze
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 )
 
@@ -104,5 +106,34 @@ func TestNoWheelMeansBuildCode(t *testing.T) {
 	in.Meta.Files = []registry.DistFile{{Name: "pkg-1.0.tar.gz", Sdist: true}}
 	if f := (buildRule{}).Check(in); len(f) != 1 || f[0].Rule != "SI-BLD-001" {
 		t.Fatalf("sdist-only package: %v", f)
+	}
+}
+
+func TestComposerIntegrityAndPlugins(t *testing.T) {
+	meta := registry.VersionMeta{Version: "3.7.0", Ref: "f4393b648b78a5408747de94fca38beb5f7e9ef8", Plugin: true}
+	in := &Input{
+		Package: &lockfile.Package{ID: "monolog/monolog@3.7.0", Name: "monolog/monolog", Version: "3.7.0",
+			Ref: "1111111111111111111111111111111111111111", Ecosystem: ecosystem.Packagist},
+		Meta: &meta,
+	}
+	if f := (integrityRule{}).Check(in); len(f) != 1 || f[0].Severity != Block {
+		t.Fatalf("commit mismatch not blocked: %v", f)
+	}
+	in.Package.Ref = strings.ToUpper(meta.Ref)
+	if f := (integrityRule{}).Check(in); len(f) != 0 {
+		t.Fatalf("same commit flagged: %v", f)
+	}
+	if f := (pluginRule{}).Check(in); len(f) != 1 || f[0].Rule != "SI-PLG-001" {
+		t.Fatalf("plugin: %v", f)
+	}
+}
+
+func TestComposerTyposquat(t *testing.T) {
+	l := popularity.For(ecosystem.Packagist)
+	if target, ok := l.Typosquat("symfoni/console"); !ok || target != "symfony/console" {
+		t.Fatalf("symfoni/console -> %q, %v", target, ok)
+	}
+	if _, ok := l.Typosquat("symfony/console"); ok {
+		t.Fatal("the real package flagged")
 	}
 }

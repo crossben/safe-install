@@ -113,6 +113,13 @@ func (r deprecatedRule) Check(in *Input) []Finding {
 	if in.Meta == nil {
 		return []Finding{{r.ID(), Low, "version not found in the registry (unpublished?)"}}
 	}
+	if in.Meta.Abandoned {
+		msg := "abandoned"
+		if repl := strings.TrimSpace(string(in.Meta.Deprecated)); repl != "" {
+			msg += "; use " + repl + " instead"
+		}
+		return []Finding{{r.ID(), Low, msg}}
+	}
 	if in.Meta.Yanked {
 		msg := "yanked"
 		if reason := strings.TrimSpace(string(in.Meta.Deprecated)); reason != "" {
@@ -132,6 +139,9 @@ type integrityRule struct{}
 func (integrityRule) ID() string { return "SI-INT-001" }
 
 func (r integrityRule) Check(in *Input) []Finding {
+	if in.Package.Ecosystem == ecosystem.Packagist {
+		return r.checkComposer(in)
+	}
 	if len(in.Package.Files) > 0 {
 		return r.checkFiles(in)
 	}
@@ -175,6 +185,32 @@ func (r integrityRule) checkFiles(in *Input) []Finding {
 		return []Finding{{r.ID(), Block, fmt.Sprintf("lockfile sha256 for %s does not match any file the registry has", what)}}
 	}
 	return nil
+}
+
+// checkComposer: Composer dists from GitHub rarely carry a checksum, so the
+// commit is the anchor: the lockfile must pin the commit Packagist serves
+// for this version (a retagged or swapped release points elsewhere).
+func (r integrityRule) checkComposer(in *Input) []Finding {
+	if in.Meta == nil {
+		return nil
+	}
+	if in.Package.Ref != "" && in.Meta.Ref != "" && !strings.EqualFold(in.Package.Ref, in.Meta.Ref) {
+		return []Finding{{r.ID(), Block, fmt.Sprintf("lockfile pins commit %s, but the registry's %s points at %s",
+			short(in.Package.Ref), in.Package.Version, short(in.Meta.Ref))}}
+	}
+	for _, f := range in.Package.Files {
+		if algo, sum, _ := strings.Cut(f.Hash, ":"); algo == "sha1" && in.Meta.Dist.Shasum != "" && !strings.EqualFold(sum, in.Meta.Dist.Shasum) {
+			return []Finding{{r.ID(), Block, "lockfile sha1 does not match the registry's"}}
+		}
+	}
+	return nil
+}
+
+func short(ref string) string {
+	if len(ref) > 12 {
+		return ref[:12]
+	}
+	return ref
 }
 
 // sriByAlgo splits an SRI string ("sha512-… sha1-…") into algo -> digest.
@@ -341,4 +377,21 @@ func (r buildRule) Check(in *Input) []Finding {
 		}
 	}
 	return []Finding{{r.ID(), Medium, "no wheel: installing it builds the source distribution, which runs its build code"}}
+}
+
+// SI-PLG-001 (Packagist): a Composer plugin. Its code runs inside Composer,
+// on every Composer command, with the project's files and credentials.
+type pluginRule struct{}
+
+func (pluginRule) ID() string { return "SI-PLG-001" }
+
+func (pluginRule) Ecosystems() []ecosystem.Ecosystem {
+	return []ecosystem.Ecosystem{ecosystem.Packagist}
+}
+
+func (r pluginRule) Check(in *Input) []Finding {
+	if in.Package.Plugin || (in.Meta != nil && in.Meta.Plugin) {
+		return []Finding{{r.ID(), Medium, "Composer plugin: its code runs inside Composer, on every Composer command"}}
+	}
+	return nil
 }

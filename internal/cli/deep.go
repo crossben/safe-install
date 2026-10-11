@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha1" // #nosec G505 -- Composer's own dist checksum format, compared with the lockfile; not used for signing
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -69,6 +70,9 @@ func deepOne(ctx context.Context, client *registry.Client, scanner *codescan.Sca
 	p := res.Package
 	if p.Ecosystem == ecosystem.PyPI {
 		return deepPython(ctx, client, scanner, res)
+	}
+	if p.Ecosystem == ecosystem.Packagist {
+		return deepComposer(ctx, client, scanner, res)
 	}
 	for _, f := range res.Findings {
 		if f.Rule == "SI-INT-001" {
@@ -189,4 +193,50 @@ func mergeFindings(fs []analyze.Finding) []analyze.Finding {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
 	return out
+}
+
+// deepComposer scans a Composer package's dist. GitHub zipballs carry no
+// checksum: the anchor is the commit. SI-INT-001 has already checked that
+// the lockfile pins the commit Packagist serves, and the download must be
+// the zipball of exactly that commit (or match the sha1 when there is one).
+func deepComposer(ctx context.Context, client *registry.Client, scanner *codescan.Scanner, res *analyze.Result) ([]analyze.Finding, error) {
+	for _, f := range res.Findings {
+		if f.Rule == "SI-INT-001" {
+			return nil, nil
+		}
+	}
+	p := res.Package
+	url := p.Resolved
+	if !strings.HasPrefix(url, "https://") {
+		url = res.Tarball
+	}
+	if url == "" {
+		return nil, fmt.Errorf("no dist URL")
+	}
+	if p.Ref != "" && !strings.Contains(url, p.Ref) {
+		return nil, fmt.Errorf("dist URL does not name the locked commit")
+	}
+	target := codescan.Target{ID: p.ID, Integrity: "ref:" + p.Ref}
+	if fs, ok := scanner.Lookup(target); ok {
+		return fs, nil
+	}
+	data, err := client.Tarball(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range p.Files {
+		if algo, sum, _ := strings.Cut(f.Hash, ":"); algo == "sha1" {
+			got := sha1.Sum(data) // #nosec G401 -- Composer's own checksum format, compared, not trusted for signing
+			if !strings.EqualFold(hex.EncodeToString(got[:]), sum) {
+				return []analyze.Finding{{Rule: "SI-INT-001", Severity: analyze.Block,
+					Message: "downloaded dist does not match the lockfile sha1; its code was not scanned"}}, nil
+			}
+		}
+	}
+	fs, err := codescan.ComposerDist(data)
+	if err != nil {
+		return nil, err
+	}
+	scanner.Store(target, fs)
+	return fs, nil
 }
