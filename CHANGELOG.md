@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Python (preview): `check` and `why`** for `uv.lock`, `poetry.lock`, `Pipfile.lock` and
+  pinned `requirements.txt`, against PyPI and OSV: malware and vulnerabilities, yanked
+  versions, fresh releases, typosquats of popular PyPI packages (list from ecosyste.ms,
+  CC BY-SA 4.0), and lockfile hashes or file URLs that PyPI does not serve (SI-INT-001/002).
+- Advisories published by several databases (GitHub's GHSA and PyPI's PYSEC) are reported
+  once.
+
 ### Changed
 
 - Python (uv, pip, Poetry, Pipenv) and PHP (Composer) projects are recognized and get a

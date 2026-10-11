@@ -41,7 +41,7 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	if err := detectSupported(dir, g.pm); err != nil {
+	if _, err := detectSupported(dir, g.pm); err != nil {
 		return err
 	}
 	path, err := lockfile.Find(dir)

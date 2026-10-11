@@ -1,5 +1,5 @@
-// Package popularity knows which npm packages are popular (an embedded,
-// download-ranked list) and fetches weekly download counts.
+// Package popularity knows which packages are popular (embedded,
+// download-ranked lists for npm and PyPI) and fetches npm weekly download counts.
 package popularity
 
 import (
@@ -7,10 +7,15 @@ import (
 	_ "embed"
 	"strings"
 	"sync"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 //go:embed top.txt
 var topTxt string
+
+//go:embed top-pypi.txt
+var topPyPITxt string
 
 // typosquatTargets is how many of the most popular names are protected.
 const typosquatTargets = 1000
@@ -22,28 +27,39 @@ type List struct {
 }
 
 var (
-	defaultOnce sync.Once
-	defaultList *List
+	npmList  = sync.OnceValue(func() *List { return parse(topTxt, ecosystem.NPM) })
+	pypiList = sync.OnceValue(func() *List { return parse(topPyPITxt, ecosystem.PyPI) })
 )
 
-// Default returns the embedded list.
-func Default() *List {
-	defaultOnce.Do(func() {
-		l := &List{rank: map[string]int{}}
-		sc := bufio.NewScanner(strings.NewReader(topTxt))
-		for sc.Scan() {
-			name := strings.TrimSpace(sc.Text())
-			if name == "" || strings.HasPrefix(name, "#") {
-				continue
-			}
-			if _, dup := l.rank[name]; !dup {
-				l.rank[name] = len(l.names)
-				l.names = append(l.names, name)
-			}
+// Default returns the embedded npm list.
+func Default() *List { return npmList() }
+
+// For returns the embedded list for an ecosystem, or nil when there is none.
+func For(e ecosystem.Ecosystem) *List {
+	switch e.Or() {
+	case ecosystem.NPM:
+		return npmList()
+	case ecosystem.PyPI:
+		return pypiList()
+	}
+	return nil
+}
+
+func parse(txt string, e ecosystem.Ecosystem) *List {
+	l := &List{rank: map[string]int{}}
+	sc := bufio.NewScanner(strings.NewReader(txt))
+	for sc.Scan() {
+		name := strings.TrimSpace(sc.Text())
+		if name == "" || strings.HasPrefix(name, "#") {
+			continue
 		}
-		defaultList = l
-	})
-	return defaultList
+		name = ecosystem.Normalize(e, name)
+		if _, dup := l.rank[name]; !dup {
+			l.rank[name] = len(l.names)
+			l.names = append(l.names, name)
+		}
+	}
+	return l
 }
 
 // Len is the number of names in the list.

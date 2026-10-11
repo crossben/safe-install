@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/codescan"
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/monitor"
 	"github.com/crossben/safe-install/internal/pm"
@@ -573,11 +575,15 @@ func (l *lineWriter) printf(format string, args ...any) {
 }
 
 // detectSupported detects the project and fails clearly for an ecosystem
-// safe-install does not handle yet (rather than "no lockfile").
-func detectSupported(dir, override string) error {
+// the command does not handle yet (rather than "no lockfile"). npm is always
+// handled; a command lists the other ecosystems it already supports.
+func detectSupported(dir, override string, also ...ecosystem.Ecosystem) (pm.Detection, error) {
 	det, err := pm.Detect(dir, override)
 	if err != nil {
-		return err
+		return det, err
 	}
-	return det.Supported()
+	if slices.Contains(also, det.Ecosystem()) {
+		return det, nil
+	}
+	return det, det.Supported()
 }

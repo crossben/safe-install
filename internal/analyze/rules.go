@@ -113,6 +113,13 @@ func (r deprecatedRule) Check(in *Input) []Finding {
 	if in.Meta == nil {
 		return []Finding{{r.ID(), Low, "version not found in the registry (unpublished?)"}}
 	}
+	if in.Meta.Yanked {
+		msg := "yanked"
+		if reason := strings.TrimSpace(string(in.Meta.Deprecated)); reason != "" {
+			msg += ": " + reason
+		}
+		return []Finding{{r.ID(), Low, msg}}
+	}
 	if msg := string(in.Meta.Deprecated); msg != "" {
 		return []Finding{{r.ID(), Low, "deprecated: " + msg}}
 	}
@@ -125,6 +132,9 @@ type integrityRule struct{}
 func (integrityRule) ID() string { return "SI-INT-001" }
 
 func (r integrityRule) Check(in *Input) []Finding {
+	if len(in.Package.Files) > 0 {
+		return r.checkFiles(in)
+	}
 	if in.Meta == nil || in.Package.Integrity == "" || in.Meta.Dist.Integrity == "" {
 		return nil
 	}
@@ -133,6 +143,36 @@ func (r integrityRule) Check(in *Input) []Finding {
 		if reg, ok := want[algo]; ok && reg != sum {
 			return []Finding{{r.ID(), Block, fmt.Sprintf("lockfile %s hash does not match the registry's", algo)}}
 		}
+	}
+	return nil
+}
+
+// checkFiles (Python): every hash the lockfile pins must be a file the
+// registry has for this version. A hash it does not know is a file that did
+// not come from there: tampered, or swapped.
+func (r integrityRule) checkFiles(in *Input) []Finding {
+	if in.Meta == nil || len(in.Meta.Files) == 0 {
+		return nil
+	}
+	known := map[string]bool{}
+	byName := map[string]string{}
+	for _, f := range in.Meta.Files {
+		known[f.SHA256] = true
+		byName[f.Name] = f.SHA256
+	}
+	for _, f := range in.Package.Files {
+		algo, sum, _ := strings.Cut(f.Hash, ":")
+		if algo != "sha256" || known[strings.ToLower(sum)] {
+			continue
+		}
+		what := "a file"
+		if f.Name != "" {
+			what = f.Name
+			if _, listed := byName[f.Name]; !listed {
+				what += " (not a file of this version)"
+			}
+		}
+		return []Finding{{r.ID(), Block, fmt.Sprintf("lockfile sha256 for %s does not match any file the registry has", what)}}
 	}
 	return nil
 }
@@ -154,20 +194,29 @@ type sourceRule struct{}
 func (sourceRule) ID() string { return "SI-INT-002" }
 
 func (r sourceRule) Check(in *Input) []Finding {
-	if in.Package.Resolved == "" || len(in.Config.RegistryHosts) == 0 {
+	if len(in.Config.RegistryHosts) == 0 {
 		return nil
 	}
-	got, err := url.Parse(in.Package.Resolved)
-	if err != nil || (got.Scheme != "http" && got.Scheme != "https") {
-		return nil
+	// The resolved index or tarball, and (Python) every file URL the lockfile
+	// pins: uv downloads each file from its own URL.
+	urls := []string{in.Package.Resolved}
+	for _, f := range in.Package.Files {
+		urls = append(urls, f.URL)
 	}
-	for _, h := range in.Config.RegistryHosts {
-		if sameRegistry(got.Hostname(), h) {
-			return nil
+	for _, raw := range urls {
+		if raw == "" {
+			continue
+		}
+		got, err := url.Parse(raw)
+		if err != nil || (got.Scheme != "http" && got.Scheme != "https") {
+			continue
+		}
+		if !slices.ContainsFunc(in.Config.RegistryHosts, func(h string) bool { return sameRegistry(got.Hostname(), h) }) {
+			return []Finding{{r.ID(), High, fmt.Sprintf("downloaded from %s, not a configured registry (%s)",
+				got.Hostname(), strings.Join(in.Config.RegistryHosts, ", "))}}
 		}
 	}
-	return []Finding{{r.ID(), High, fmt.Sprintf("downloaded from %s, not a configured registry (%s)",
-		got.Hostname(), strings.Join(in.Config.RegistryHosts, ", "))}}
+	return nil
 }
 
 // registry.yarnpkg.com is a CNAME for the npm registry.
@@ -193,7 +242,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // SI-POP-001: name imitates a popular package.
-type typosquatRule struct{ npmOnly }
+type typosquatRule struct{}
 
 func (typosquatRule) ID() string { return "SI-POP-001" }
 

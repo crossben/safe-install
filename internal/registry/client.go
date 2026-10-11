@@ -57,18 +57,26 @@ type cacheEntry struct {
 // Packument fetches the full document for name. Transient failures (timeouts,
 // dropped connections, 5xx, 429) are retried with a short backoff.
 func (c *Client) Packument(ctx context.Context, name string) (*Packument, error) {
-	u := c.url(name)
+	return c.document(ctx, name, c.url(name), decode)
+}
+
+// decoder turns a registry response into the packument shape the rules read.
+type decoder func(body []byte) (*Packument, error)
+
+// document fetches u (cached, revalidated, retried) and decodes it with dec.
+// Other ecosystems' registries use it with their own URL and decoder.
+func (c *Client) document(ctx context.Context, name, u string, dec decoder) (*Packument, error) {
 	cached, _ := c.readCache(u)
 	if c.Offline {
 		if cached == nil {
 			return nil, fmt.Errorf("%s: %w", name, ErrNotCached)
 		}
-		return decode(cached.Body)
+		return dec(cached.Body)
 	}
 	var err error
 	for attempt := 0; ; attempt++ {
 		var p *Packument
-		p, err = c.fetchPackument(ctx, name, u, cached)
+		p, err = c.fetchPackument(ctx, name, u, cached, dec)
 		if err == nil || attempt == maxRetries || !retryable(ctx, err) {
 			return p, err
 		}
@@ -99,7 +107,7 @@ func retryable(ctx context.Context, err error) bool {
 	return errors.As(err, &ne) // timeouts, resets, refused connections
 }
 
-func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cacheEntry) (*Packument, error) {
+func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cacheEntry, dec decoder) (*Packument, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -125,7 +133,7 @@ func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cac
 
 	switch {
 	case resp.StatusCode == http.StatusNotModified && cached != nil:
-		return decode(cached.Body)
+		return dec(cached.Body)
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%s: %w", name, ErrNotFound)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
@@ -142,7 +150,7 @@ func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cac
 	if len(body) > maxPackument {
 		return nil, fmt.Errorf("%s: registry response over %d bytes", name, maxPackument)
 	}
-	p, err := decode(body)
+	p, err := dec(body)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,8 @@ type Query struct {
 type Vuln struct {
 	ID       string
 	Summary  string
-	Severity string // GitHub advisory severity: LOW, MODERATE, HIGH, CRITICAL; "" if unknown
+	Severity string   // GitHub advisory severity: LOW, MODERATE, HIGH, CRITICAL; "" if unknown
+	Aliases  []string // other IDs of the same advisory (CVE, GHSA, PYSEC…)
 }
 
 // Malicious reports whether the entry is a known malicious package.
@@ -103,11 +105,43 @@ func (c *Client) Lookup(ctx context.Context, pkgs []Package) (map[Package][]Vuln
 	}
 	out := map[Package][]Vuln{}
 	for p, vs := range ids {
-		for _, id := range vs {
-			out[p] = append(out[p], details[id])
-		}
+		out[p] = dedupe(vs, details)
 	}
 	return out, nil
+}
+
+// dedupe keeps one entry per advisory: databases republish each other's
+// (PyPI's PYSEC entries alias GitHub's GHSA ones). Malware entries win, then
+// GitHub's (they carry a severity), then the rest; an entry whose ID or
+// aliases were already kept is dropped.
+func dedupe(ids []string, details map[string]Vuln) []Vuln {
+	rank := func(id string) int {
+		switch {
+		case strings.HasPrefix(id, "MAL-"):
+			return 0
+		case strings.HasPrefix(id, "GHSA-"):
+			return 1
+		}
+		return 2
+	}
+	sorted := slices.Clone(ids)
+	slices.SortStableFunc(sorted, func(a, b string) int { return rank(a) - rank(b) })
+	seen := map[string]bool{}
+	var out []Vuln
+	for _, id := range sorted {
+		v := details[id]
+		if seen[id] || slices.ContainsFunc(v.Aliases, func(a string) bool { return seen[a] }) {
+			continue
+		}
+		seen[id] = true
+		for _, a := range v.Aliases {
+			seen[a] = true
+		}
+		out = append(out, v)
+	}
+	// Back to ID order: stable, readable output.
+	slices.SortFunc(out, func(a, b Vuln) int { return strings.Compare(a.ID, b.ID) })
+	return out
 }
 
 // details fetches summary and severity for each advisory once. Malicious
@@ -137,7 +171,8 @@ func (c *Client) details(ctx context.Context, ids map[Package][]string) (map[str
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			var d struct {
-				Summary          string `json:"summary"`
+				Aliases          []string `json:"aliases"`
+				Summary          string   `json:"summary"`
 				DatabaseSpecific struct {
 					Severity string `json:"severity"`
 				} `json:"database_specific"`
@@ -151,7 +186,7 @@ func (c *Client) details(ctx context.Context, ids map[Package][]string) (map[str
 				}
 				return
 			}
-			out[id] = Vuln{ID: id, Summary: d.Summary, Severity: strings.ToUpper(d.DatabaseSpecific.Severity)}
+			out[id] = Vuln{ID: id, Summary: d.Summary, Severity: strings.ToUpper(d.DatabaseSpecific.Severity), Aliases: d.Aliases}
 		}()
 	}
 	wg.Wait()

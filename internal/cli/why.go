@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 )
 
@@ -41,16 +42,22 @@ func runWhy(cmd *cobra.Command, g *globalFlags, query string) error {
 	if err != nil {
 		return err
 	}
-	if err := detectSupported(dir, g.pm); err != nil {
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	if err != nil {
 		return err
 	}
-	path, err := lockfile.Find(dir)
+	path, err := lockfile.FindFor(dir, det.Ecosystem())
 	if err != nil {
 		return err
 	}
 	graph, err := lockfile.LoadFile(path)
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	if name, version, ok := strings.Cut(query, "@"); ok && det.Ecosystem() == ecosystem.PyPI {
+		query = ecosystem.Normalize(ecosystem.PyPI, name) + "@" + version
+	} else if det.Ecosystem() == ecosystem.PyPI {
+		query = ecosystem.Normalize(ecosystem.PyPI, query)
 	}
 	found := graph.Find(query)
 	if len(found) == 0 {

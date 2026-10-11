@@ -1,0 +1,171 @@
+{
+ "info": {
+  "name": "requests",
+  "version": "2.34.2"
+ },
+ "last_serial": 37059094,
+ "ownership": {
+  "organization": null,
+  "roles": [
+   {
+    "role": "Owner",
+    "user": "Lukasa"
+   },
+   {
+    "role": "Owner",
+    "user": "graffatcolmingov"
+   },
+   {
+    "role": "Owner",
+    "user": "nateprewitt"
+   }
+  ]
+ },
+ "releases": {
+  "2.0.0": [
+   {
+    "comment_text": "",
+    "core-metadata": {
+     "sha256": "947ae5985faceddfc9e53915629bb928556e9a552b7e3e7f0304999d0f2ab69f"
+    },
+    "digests": {
+     "blake2b_256": "bf78be2b4c440ea767336d8448fe671fe1d78ca499e49d77dac90f92191cca0e",
+     "md5": "6af9c16dbddd2fc751ae4f1606d041e8",
+     "sha256": "2ef65639cb9600443f85451df487818c31f993ab288f313d29cc9db4f3cbe6ed"
+    },
+    "downloads": -1,
+    "filename": "requests-2.0.0-py2.py3-none-any.whl",
+    "has_sig": false,
+    "md5_digest": "6af9c16dbddd2fc751ae4f1606d041e8",
+    "packagetype": "bdist_wheel",
+    "python_version": "2.7",
+    "requires_python": null,
+    "size": 391141,
+    "upload_time": "2013-11-15T19:09:51",
+    "upload_time_iso_8601": "2013-11-15T19:09:51.527323Z",
+    "url": "https://files.pythonhosted.org/packages/bf/78/be2b4c440ea767336d8448fe671fe1d78ca499e49d77dac90f92191cca0e/requests-2.0.0-py2.py3-none-any.whl",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "comment_text": "",
+    "core-metadata": false,
+    "digests": {
+     "blake2b_256": "8e88102742c48605aef8d39fa719d932c67783d789679628fa1433cb4b2c7a2a",
+     "md5": "856fc825c17483e25fd55db115028e3f",
+     "sha256": "78536038f54cff6ade3be6863403146665b5a3923dd61108c98d8b64141f9d70"
+    },
+    "downloads": -1,
+    "filename": "requests-2.0.0.tar.gz",
+    "has_sig": false,
+    "md5_digest": "856fc825c17483e25fd55db115028e3f",
+    "packagetype": "sdist",
+    "python_version": "source",
+    "requires_python": null,
+    "size": 362994,
+    "upload_time": "2013-09-24T18:39:33",
+    "upload_time_iso_8601": "2013-09-24T18:39:33.154169Z",
+    "url": "https://files.pythonhosted.org/packages/8e/88/102742c48605aef8d39fa719d932c67783d789679628fa1433cb4b2c7a2a/requests-2.0.0.tar.gz",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ],
+  "2.32.0": [
+   {
+    "comment_text": "",
+    "core-metadata": {
+     "sha256": "366815cd98a835663f39fcb94a5be5a0fee15268b758ea80e64b650a5ecb7781"
+    },
+    "digests": {
+     "blake2b_256": "24e809e8d662a9675a4e4f5dd7a8e6127b463a091d2703ed931a64aa66d00065",
+     "md5": "53f4922c1891e32e32ce579c1825171f",
+     "sha256": "f2c3881dddb70d056c5bd7600a4fae312b2a300e39be6a118d30b90bd27262b5"
+    },
+    "downloads": -1,
+    "filename": "requests-2.32.0-py3-none-any.whl",
+    "has_sig": false,
+    "md5_digest": "53f4922c1891e32e32ce579c1825171f",
+    "packagetype": "bdist_wheel",
+    "python_version": "py3",
+    "requires_python": ">=3.8",
+    "size": 63695,
+    "upload_time": "2024-05-20T16:08:19",
+    "upload_time_iso_8601": "2024-05-20T16:08:19.530618Z",
+    "url": "https://files.pythonhosted.org/packages/24/e8/09e8d662a9675a4e4f5dd7a8e6127b463a091d2703ed931a64aa66d00065/requests-2.32.0-py3-none-any.whl",
+    "yanked": true,
+    "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation"
+   },
+   {
+    "comment_text": "",
+    "core-metadata": false,
+    "digests": {
+     "blake2b_256": "28a2423f4d16d6934ef502f10ad56673719dd4345e656aedbd6687ccc359ffc5",
+     "md5": "00693243143146aad73add14b3737662",
+     "sha256": "fa5490319474c82ef1d2c9bc459d3652e3ae4ef4c4ebdd18a21145a47ca4b6b8"
+    },
+    "downloads": -1,
+    "filename": "requests-2.32.0.tar.gz",
+    "has_sig": false,
+    "md5_digest": "00693243143146aad73add14b3737662",
+    "packagetype": "sdist",
+    "python_version": "source",
+    "requires_python": ">=3.8",
+    "size": 114373,
+    "upload_time": "2024-05-20T16:11:48",
+    "upload_time_iso_8601": "2024-05-20T16:11:48.306524Z",
+    "url": "https://files.pythonhosted.org/packages/28/a2/423f4d16d6934ef502f10ad56673719dd4345e656aedbd6687ccc359ffc5/requests-2.32.0.tar.gz",
+    "yanked": true,
+    "yanked_reason": "Yanked due to conflicts with CVE-2024-35195 mitigation"
+   }
+  ],
+  "2.32.3": [
+   {
+    "comment_text": "",
+    "core-metadata": {
+     "sha256": "658ee8454c1e2e76fb8c2127116f61156b3b22941b3559c00389dca70038581a"
+    },
+    "digests": {
+     "blake2b_256": "f99b335f9764261e915ed497fcdeb11df5dfd6f7bf257d4a6a2a686d80da4d54",
+     "md5": "83d50f7980b330c48f3bfe86372adcca",
+     "sha256": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6"
+    },
+    "downloads": -1,
+    "filename": "requests-2.32.3-py3-none-any.whl",
+    "has_sig": false,
+    "md5_digest": "83d50f7980b330c48f3bfe86372adcca",
+    "packagetype": "bdist_wheel",
+    "python_version": "py3",
+    "requires_python": ">=3.8",
+    "size": 64928,
+    "upload_time": "2024-05-29T15:37:47",
+    "upload_time_iso_8601": "2024-05-29T15:37:47.027275Z",
+    "url": "https://files.pythonhosted.org/packages/f9/9b/335f9764261e915ed497fcdeb11df5dfd6f7bf257d4a6a2a686d80da4d54/requests-2.32.3-py3-none-any.whl",
+    "yanked": false,
+    "yanked_reason": null
+   },
+   {
+    "comment_text": "",
+    "core-metadata": false,
+    "digests": {
+     "blake2b_256": "63702bf7780ad2d390a8d301ad0b550f1581eadbd9a20f896afe06353c2a2913",
+     "md5": "fa3ee5ac3f1b3f4368bd74ab530d3f0f",
+     "sha256": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760"
+    },
+    "downloads": -1,
+    "filename": "requests-2.32.3.tar.gz",
+    "has_sig": false,
+    "md5_digest": "fa3ee5ac3f1b3f4368bd74ab530d3f0f",
+    "packagetype": "sdist",
+    "python_version": "source",
+    "requires_python": ">=3.8",
+    "size": 131218,
+    "upload_time": "2024-05-29T15:37:49",
+    "upload_time_iso_8601": "2024-05-29T15:37:49.536140Z",
+    "url": "https://files.pythonhosted.org/packages/63/70/2bf7780ad2d390a8d301ad0b550f1581eadbd9a20f896afe06353c2a2913/requests-2.32.3.tar.gz",
+    "yanked": false,
+    "yanked_reason": null
+   }
+  ]
+ },
+ "vulnerabilities": []
+}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -143,5 +144,23 @@ func TestQueryUsesTheEcosystem(t *testing.T) {
 	want := []string{"npm:lodash", "PyPI:requests", "Packagist:monolog/monolog"}
 	if len(seen) != 3 || seen[0] != want[0] || seen[1] != want[1] || seen[2] != want[2] {
 		t.Fatalf("queries = %v, want %v", seen, want)
+	}
+}
+
+func TestDedupeAliases(t *testing.T) {
+	details := map[string]Vuln{
+		"PYSEC-1": {ID: "PYSEC-1", Aliases: []string{"CVE-1", "GHSA-a"}},
+		"GHSA-a":  {ID: "GHSA-a", Severity: "HIGH", Aliases: []string{"CVE-1", "PYSEC-1"}},
+		"PYSEC-2": {ID: "PYSEC-2"},
+		"MAL-1":   {ID: "MAL-1", Aliases: []string{"GHSA-m"}},
+		"GHSA-m":  {ID: "GHSA-m", Aliases: []string{"MAL-1"}},
+	}
+	got := dedupe([]string{"PYSEC-1", "GHSA-a", "PYSEC-2", "GHSA-m", "MAL-1"}, details)
+	var ids []string
+	for _, v := range got {
+		ids = append(ids, v.ID)
+	}
+	if strings.Join(ids, ",") != "GHSA-a,MAL-1,PYSEC-2" {
+		t.Fatalf("kept %v, want GHSA-a,MAL-1,PYSEC-2", ids)
 	}
 }

@@ -240,6 +240,23 @@ how to read the results. Add them to your agent's instructions file:
 safe-install llm >> AGENTS.md      # or CLAUDE.md, .cursorrules, …
 ```
 
+## Python (preview)
+
+`safe-install check` and `safe-install why` work on Python projects too: `uv.lock`,
+`poetry.lock`, `Pipfile.lock` and pinned `requirements.txt` (with `--hash` lines and pip-compile
+or `uv export` "via" comments). Packages are checked against PyPI and OSV with the same rules:
+known malware and vulnerabilities, yanked versions, fresh releases (`--min-age`), names that
+imitate popular PyPI packages, and lockfile hashes or download URLs that PyPI does not serve.
+
+```sh
+safe-install check            # in a folder with uv.lock, poetry.lock, Pipfile.lock or requirements.txt
+safe-install why urllib3      # which dependencies bring it in
+```
+
+Installing (wheels only, with build scripts reviewed like install scripts) comes next.
+Private package indexes are not read yet. The PyPI popularity list comes from
+[ecosyste.ms](https://ecosyste.ms) (data CC BY-SA 4.0).
+
 ## Editor extension
 
 **safe-install for VS Code** (also Cursor, Windsurf and VSCodium) shows the same results in

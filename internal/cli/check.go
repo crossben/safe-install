@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/npmrc"
 	"github.com/crossben/safe-install/internal/osv"
@@ -63,10 +65,11 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	if err != nil {
 		return err
 	}
-	if err := detectSupported(dir, g.pm); err != nil {
+	det, err := detectSupported(dir, g.pm, ecosystem.PyPI)
+	if err != nil {
 		return err
 	}
-	path, err := lockfile.Find(dir)
+	path, err := lockfile.FindFor(dir, det.Ecosystem())
 	if err != nil {
 		return err
 	}
@@ -74,7 +77,7 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	fetcher, err := newFetcher(g)
+	fetcher, err := newFetcherFor(g, det.Ecosystem())
 	if err != nil {
 		return err
 	}
@@ -89,6 +92,11 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		graph = lockfile.Changed(base, graph)
 	}
 	cfg := analysisConfig(g, pol, minAge)
+	if det.Ecosystem() == ecosystem.PyPI {
+		cfg.RegistryHosts = pypiHosts()
+		cfg.Popular = popularity.For(ecosystem.PyPI)
+		cfg.Downloads = nil // npm's download counts API
+	}
 	bar := startProgress(cmd, g, "Checking packages", 0)
 	cfg.Progress = bar.Set
 	rep := analyze.Analyze(cmd.Context(), graph, fetcher, cfg)
@@ -205,6 +213,27 @@ func repoRelative(path string) string {
 			return filepath.Base(path)
 		}
 	}
+}
+
+// newFetcherFor returns the registry client for an ecosystem.
+func newFetcherFor(g *globalFlags, e ecosystem.Ecosystem) (registry.Fetcher, error) {
+	if e != ecosystem.PyPI {
+		return newFetcher(g)
+	}
+	return &registry.PyPI{
+		Client:  &registry.Client{CacheDir: registry.DefaultCacheDir(), Offline: g.offline},
+		BaseURL: os.Getenv("SAFE_INSTALL_PYPI_URL"), // tests; default pypi.org
+	}, nil
+}
+
+// pypiHosts are where Python packages may come from (SI-INT-002).
+// Private indexes (pip.conf, uv.toml) come in a later milestone.
+func pypiHosts() []string {
+	hosts := []string{"pypi.org", "files.pythonhosted.org"}
+	if u, err := url.Parse(os.Getenv("SAFE_INSTALL_PYPI_URL")); err == nil && u.Hostname() != "" {
+		hosts = append(hosts, u.Hostname())
+	}
+	return hosts
 }
 
 func newFetcher(g *globalFlags) (registry.Fetcher, error) {

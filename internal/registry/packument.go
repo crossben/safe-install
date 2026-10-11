@@ -29,6 +29,21 @@ type VersionMeta struct {
 		Attestations *Attestations `json:"attestations"`
 	} `json:"dist"`
 	Scripts map[string]string `json:"scripts"`
+
+	// Files are the version's distribution files (PyPI: wheels and the sdist).
+	Files []DistFile `json:"-"`
+	// Yanked (PyPI): every file of the version was pulled; Deprecated holds the reason.
+	Yanked bool `json:"-"`
+}
+
+// DistFile is one downloadable file of a version (PyPI).
+type DistFile struct {
+	Name     string
+	URL      string
+	SHA256   string // hex
+	Uploaded time.Time
+	Yanked   bool
+	Sdist    bool
 }
 
 // Person is a registry user.

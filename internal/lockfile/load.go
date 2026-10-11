@@ -28,6 +28,26 @@ var names = []string{
 	"bun.lockb",
 }
 
+// Lockfiles of other ecosystems, by ecosystem, in priority order.
+var otherNames = map[ecosystem.Ecosystem][]string{
+	ecosystem.PyPI: {"uv.lock", "poetry.lock", "Pipfile.lock", "requirements.txt"},
+}
+
+// FindFor returns the lockfile in dir for ecosystem e (npm: as Find).
+func FindFor(dir string, e ecosystem.Ecosystem) (string, error) {
+	names, ok := otherNames[e]
+	if !ok {
+		return Find(dir)
+	}
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", ErrNoLockfile
+}
+
 // Find returns the path of the lockfile in dir (the first one found, in the order above).
 func Find(dir string) (string, error) {
 	for _, name := range names {
@@ -67,7 +87,7 @@ func LoadFile(path string) (*Graph, error) {
 // Parse parses lockfile contents. name is the lockfile's file name; dir holds
 // the project's package.json (and workspaces), read for Yarn lockfiles.
 func Parse(name string, data []byte, dir string) (*Graph, error) {
-	g, err := parseJS(name, data, dir)
+	g, err := parseAny(name, data, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +99,16 @@ func Parse(name string, data []byte, dir string) (*Graph, error) {
 	return g, nil
 }
 
-func parseJS(name string, data []byte, dir string) (*Graph, error) {
+func parseAny(name string, data []byte, dir string) (*Graph, error) {
 	switch name {
+	case "uv.lock":
+		return parseUV(data)
+	case "poetry.lock":
+		return parsePoetry(data, dir)
+	case "Pipfile.lock":
+		return parsePipenv(data, dir)
+	case "requirements.txt":
+		return parseRequirements(data, dir)
 	case "bun.lockb":
 		return nil, ErrBinaryLockfile
 	case "npm-shrinkwrap.json", "package-lock.json":

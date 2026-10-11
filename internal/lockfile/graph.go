@@ -21,7 +21,20 @@ const (
 	YarnV1    Format = "yarn-v1"    // yarn.lock, classic
 	YarnBerry Format = "yarn-berry" // yarn.lock, __metadata (Yarn 2+)
 	Bun       Format = "bun"        // bun.lock (text)
+
+	UV           Format = "uv"           // uv.lock
+	Poetry       Format = "poetry"       // poetry.lock
+	Pipenv       Format = "pipenv"       // Pipfile.lock
+	Requirements Format = "requirements" // requirements.txt with pinned versions (pip)
 )
+
+// File is one distribution file a lockfile allows for a package (Python:
+// a wheel or the sdist), identified by its hash.
+type File struct {
+	Name string // file name, when the lockfile records it
+	URL  string // download URL, when the lockfile records it
+	Hash string // "sha256:<hex>"
+}
 
 // Package is one resolved name@version in the tree. Local workspace
 // packages are not included; their dependencies are roots.
@@ -35,6 +48,7 @@ type Package struct {
 	Dev       bool   // reachable only through devDependencies
 
 	Ecosystem ecosystem.Ecosystem // where the package comes from (npm for every JavaScript lockfile)
+	Files     []File              // Python: the distribution files the lockfile pins
 
 	Dependencies []string // IDs, sorted
 }

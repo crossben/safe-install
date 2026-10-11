@@ -7,7 +7,7 @@ import (
 )
 
 func TestRuleScopes(t *testing.T) {
-	npmOnlyRules := map[string]bool{"SI-REC-002": true, "SI-POP-001": true, "SI-POP-002": true}
+	npmOnlyRules := map[string]bool{"SI-REC-002": true, "SI-POP-002": true}
 	for _, r := range Rules {
 		for _, e := range []ecosystem.Ecosystem{ecosystem.NPM, "", ecosystem.PyPI, ecosystem.Packagist} {
 			want := e.Or() == ecosystem.NPM || !npmOnlyRules[r.ID()]
