@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -53,5 +54,55 @@ func TestYankedWording(t *testing.T) {
 	in.Meta.Yanked, in.Meta.Deprecated = true, "broken build"
 	if f := (deprecatedRule{}).Check(in); len(f) != 1 || f[0].Message != "yanked: broken build" {
 		t.Fatalf("got %v", f)
+	}
+}
+
+type fakeProvenance map[string]map[string]bool
+
+func (f fakeProvenance) Provenance(_ context.Context, name string) (map[string]bool, error) {
+	return f[name], nil
+}
+
+// The axios pattern on PyPI: earlier releases published by CI with
+// attestations, the newest one without.
+func TestPyPIProvenanceDropped(t *testing.T) {
+	now := time.Now()
+	file := func(name string) registry.DistFile { return registry.DistFile{Name: name, SHA256: name} }
+	doc := &registry.Packument{
+		Versions: map[string]registry.VersionMeta{
+			"1.0": {Version: "1.0", Files: []registry.DistFile{file("pkg-1.0.tar.gz")}},
+			"1.1": {Version: "1.1", Files: []registry.DistFile{file("pkg-1.1.tar.gz")}},
+		},
+		Time: map[string]time.Time{"1.0": now.AddDate(0, -2, 0), "1.1": now.Add(-time.Hour)},
+	}
+	meta := doc.Versions["1.1"]
+	in := &Input{Package: &lockfile.Package{ID: "pkg@1.1", Name: "pkg", Version: "1.1", Ecosystem: ecosystem.PyPI},
+		Doc: doc, Meta: &meta, Downloads: -1}
+	cfg := Config{Now: now, Provenance: fakeProvenance{"pkg": {"pkg-1.0.tar.gz": true, "pkg-1.1.tar.gz": false}}}
+	in.Config = cfg
+	if w := markProvenance(context.Background(), []*Input{in}, cfg); len(w) != 0 {
+		t.Fatal(w)
+	}
+	f := (publisherRule{}).Check(in)
+	if len(f) != 1 || f[0].Severity != High {
+		t.Fatalf("provenance drop not flagged: %v", f)
+	}
+	// Attested release: nothing to report.
+	cfg.Provenance = fakeProvenance{"pkg": {"pkg-1.0.tar.gz": true, "pkg-1.1.tar.gz": true}}
+	in.Config = cfg
+	markProvenance(context.Background(), []*Input{in}, cfg)
+	if f := (publisherRule{}).Check(in); len(f) != 0 {
+		t.Fatalf("attested release flagged: %v", f)
+	}
+}
+
+func TestNoWheelMeansBuildCode(t *testing.T) {
+	in := pyInput(nil, "")
+	if f := (buildRule{}).Check(in); len(f) != 0 {
+		t.Fatalf("package with a wheel flagged: %v", f)
+	}
+	in.Meta.Files = []registry.DistFile{{Name: "pkg-1.0.tar.gz", Sdist: true}}
+	if f := (buildRule{}).Check(in); len(f) != 1 || f[0].Rule != "SI-BLD-001" {
+		t.Fatalf("sdist-only package: %v", f)
 	}
 }

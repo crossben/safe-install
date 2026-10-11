@@ -30,7 +30,7 @@ func (p *PyPI) Packument(ctx context.Context, name string) (*Packument, error) {
 		base = DefaultPyPIURL
 	}
 	u := strings.TrimSuffix(base, "/") + "/pypi/" + url.PathEscape(ecosystem.Normalize(ecosystem.PyPI, name)) + "/json"
-	return p.document(ctx, name, u, decodePyPI)
+	return p.document(ctx, name, u, decodePyPI, "application/json")
 }
 
 type pypiFile struct {
@@ -90,4 +90,35 @@ func decodePyPI(body []byte) (*Packument, error) {
 		p.Time[version] = first
 	}
 	return p, nil
+}
+
+// Provenance returns, for every file of the project, whether PyPI serves a
+// PEP 740 attestation for it (published by a CI workflow through Trusted
+// Publishing). It reads the Simple API, which the JSON API does not cover.
+// The attestation is read, not re-verified, as for npm provenance.
+func (p *PyPI) Provenance(ctx context.Context, name string) (map[string]bool, error) {
+	base := p.BaseURL
+	if base == "" {
+		base = DefaultPyPIURL
+	}
+	u := strings.TrimSuffix(base, "/") + "/simple/" + url.PathEscape(ecosystem.Normalize(ecosystem.PyPI, name)) + "/"
+	var out map[string]bool
+	_, err := p.document(ctx, name, u, func(body []byte) (*Packument, error) {
+		var doc struct {
+			Files []struct {
+				Filename   string `json:"filename"`
+				Provenance any    `json:"provenance"`
+			} `json:"files"`
+		}
+		if err := json.Unmarshal(body, &doc); err != nil {
+			return nil, fmt.Errorf("decoding PyPI simple index: %w", err)
+		}
+		out = map[string]bool{}
+		for _, f := range doc.Files {
+			s, _ := f.Provenance.(string)
+			out[f.Filename] = s != ""
+		}
+		return &Packument{Name: name}, nil
+	}, simpleJSON)
+	return out, err
 }

@@ -44,6 +44,10 @@ type DistFile struct {
 	Uploaded time.Time
 	Yanked   bool
 	Sdist    bool
+
+	// Provenance: the file has a PEP 740 attestation (Trusted Publishing).
+	// Only filled for recent versions (see PyPI.Provenance).
+	Provenance bool
 }
 
 // Person is a registry user.
@@ -69,7 +73,16 @@ type Provenance struct {
 
 // HasProvenance reports whether the version was published with provenance.
 func (m *VersionMeta) HasProvenance() bool {
-	return m.Dist.Attestations != nil && m.Dist.Attestations.Provenance != nil
+	if m.Dist.Attestations != nil && m.Dist.Attestations.Provenance != nil {
+		return true
+	}
+	// PyPI: a file published with Trusted Publishing carries a PEP 740 attestation.
+	for _, f := range m.Files {
+		if f.Provenance {
+			return true
+		}
+	}
+	return false
 }
 
 // Published returns when version was published, or the zero time.

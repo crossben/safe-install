@@ -96,6 +96,9 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		cfg.RegistryHosts = pypiHosts()
 		cfg.Popular = popularity.For(ecosystem.PyPI)
 		cfg.Downloads = nil // npm's download counts API
+		if p, ok := fetcher.(*registry.PyPI); ok {
+			cfg.Provenance = p
+		}
 	}
 	bar := startProgress(cmd, g, "Checking packages", 0)
 	cfg.Progress = bar.Set

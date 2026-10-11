@@ -8,6 +8,11 @@
   pinned `requirements.txt`, against PyPI and OSV: malware and vulnerabilities, yanked
   versions, fresh releases, typosquats of popular PyPI packages (list from ecosyste.ms,
   CC BY-SA 4.0), and lockfile hashes or file URLs that PyPI does not serve (SI-INT-001/002).
+- **Python provenance** (`SI-REC-002`): a recent release without the PEP 740 attestation
+  (Trusted Publishing) its previous release had.
+- **Python build code**: `SI-BLD-001` (no wheel, so installing runs build code); with
+  `check --deep`, `SI-BLD-002` (build code that downloads, evaluates or reads secrets),
+  `SI-PTH-001` (`.pth` files that run code at startup) and `SI-CODE-001..003` for Python.
 - Advisories published by several databases (GitHub's GHSA and PyPI's PYSEC) are reported
   once.
 

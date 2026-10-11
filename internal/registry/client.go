@@ -57,15 +57,18 @@ type cacheEntry struct {
 // Packument fetches the full document for name. Transient failures (timeouts,
 // dropped connections, 5xx, 429) are retried with a short backoff.
 func (c *Client) Packument(ctx context.Context, name string) (*Packument, error) {
-	return c.document(ctx, name, c.url(name), decode)
+	return c.document(ctx, name, c.url(name), decode, "application/json")
 }
+
+// simpleJSON asks PyPI's Simple API for its JSON form (PEP 691).
+const simpleJSON = "application/vnd.pypi.simple.v1+json"
 
 // decoder turns a registry response into the packument shape the rules read.
 type decoder func(body []byte) (*Packument, error)
 
 // document fetches u (cached, revalidated, retried) and decodes it with dec.
 // Other ecosystems' registries use it with their own URL and decoder.
-func (c *Client) document(ctx context.Context, name, u string, dec decoder) (*Packument, error) {
+func (c *Client) document(ctx context.Context, name, u string, dec decoder, accept string) (*Packument, error) {
 	cached, _ := c.readCache(u)
 	if c.Offline {
 		if cached == nil {
@@ -76,7 +79,7 @@ func (c *Client) document(ctx context.Context, name, u string, dec decoder) (*Pa
 	var err error
 	for attempt := 0; ; attempt++ {
 		var p *Packument
-		p, err = c.fetchPackument(ctx, name, u, cached, dec)
+		p, err = c.fetchPackument(ctx, name, u, cached, dec, accept)
 		if err == nil || attempt == maxRetries || !retryable(ctx, err) {
 			return p, err
 		}
@@ -107,13 +110,13 @@ func retryable(ctx context.Context, err error) bool {
 	return errors.As(err, &ne) // timeouts, resets, refused connections
 }
 
-func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cacheEntry, dec decoder) (*Packument, error) {
+func (c *Client) fetchPackument(ctx context.Context, name, u string, cached *cacheEntry, dec decoder, accept string) (*Packument, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("User-Agent", "safe-install")
 	if c.Config != nil {
 		// Credentials only for the registry configured for this URL; Go drops

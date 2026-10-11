@@ -50,3 +50,23 @@ func TestPyPIRejectsNonProjects(t *testing.T) {
 		}
 	}
 }
+
+func TestPyPIProvenanceFromSimpleAPI(t *testing.T) {
+	var accept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accept = r.Header.Get("Accept")
+		if r.URL.Path != "/simple/my-pkg/" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"files":[{"filename":"my_pkg-1.0.tar.gz","provenance":null},{"filename":"my_pkg-2.0.tar.gz","provenance":"https://pypi.org/integrity/my-pkg/2.0/my_pkg-2.0.tar.gz/provenance"}]}`))
+	}))
+	defer srv.Close()
+	got, err := (&PyPI{Client: &Client{}, BaseURL: srv.URL}).Provenance(context.Background(), "My_Pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accept != "application/vnd.pypi.simple.v1+json" || got["my_pkg-1.0.tar.gz"] || !got["my_pkg-2.0.tar.gz"] {
+		t.Fatalf("accept %q, got %v", accept, got)
+	}
+}

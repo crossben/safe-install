@@ -36,7 +36,7 @@ const publisherWindow = 90 * 24 * time.Hour
 
 // SI-REC-002: provenance dropped, a new human publisher, or maintainers
 // added, on a recent release.
-type publisherRule struct{ npmOnly }
+type publisherRule struct{}
 
 func (publisherRule) ID() string { return "SI-REC-002" }
 
@@ -320,3 +320,25 @@ func (r blockRule) Check(in *Input) []Finding {
 type npmOnly struct{}
 
 func (npmOnly) Ecosystems() []ecosystem.Ecosystem { return []ecosystem.Ecosystem{ecosystem.NPM} }
+
+// SI-BLD-001 (PyPI): the version has no wheel at all, so installing it
+// builds the source distribution, which runs the package's build code
+// (setup.py, build backend hooks) on your machine. Platform gaps (wheels
+// for other systems only) are not detected here.
+type buildRule struct{}
+
+func (buildRule) ID() string { return "SI-BLD-001" }
+
+func (buildRule) Ecosystems() []ecosystem.Ecosystem { return []ecosystem.Ecosystem{ecosystem.PyPI} }
+
+func (r buildRule) Check(in *Input) []Finding {
+	if in.Meta == nil || len(in.Meta.Files) == 0 {
+		return nil
+	}
+	for _, f := range in.Meta.Files {
+		if !f.Sdist {
+			return nil
+		}
+	}
+	return []Finding{{r.ID(), Medium, "no wheel: installing it builds the source distribution, which runs its build code"}}
+}

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/codescan"
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/registry"
 )
 
@@ -64,6 +67,9 @@ func deepScan(cmd *cobra.Command, g *globalFlags, rep *analyze.Report) {
 
 func deepOne(ctx context.Context, client *registry.Client, scanner *codescan.Scanner, res *analyze.Result) ([]analyze.Finding, error) {
 	p := res.Package
+	if p.Ecosystem == ecosystem.PyPI {
+		return deepPython(ctx, client, scanner, res)
+	}
 	for _, f := range res.Findings {
 		if f.Rule == "SI-INT-001" {
 			return nil, nil // already blocked for integrity: nothing to gain from its code
@@ -100,4 +106,87 @@ func deepOne(ctx context.Context, client *registry.Client, scanner *codescan.Sca
 	}
 	scanner.Store(target, fs)
 	return fs, nil
+}
+
+// deepPython scans a Python package's sdist (its build code and source) and
+// one wheel (preferring the pure-Python one, which is what most installs
+// get): each is checked against PyPI's sha256 and, when the lockfile pins
+// hashes, against those too, then scanned in memory.
+func deepPython(ctx context.Context, client *registry.Client, scanner *codescan.Scanner, res *analyze.Result) ([]analyze.Finding, error) {
+	for _, f := range res.Findings {
+		if f.Rule == "SI-INT-001" {
+			return nil, nil
+		}
+	}
+	pinned := map[string]bool{}
+	for _, f := range res.Package.Files {
+		if algo, sum, ok := strings.Cut(f.Hash, ":"); ok && algo == "sha256" {
+			pinned[strings.ToLower(sum)] = true
+		}
+	}
+	var picks []registry.DistFile
+	var sdist, pure, anyWheel *registry.DistFile
+	for i := range res.DistFiles {
+		f := &res.DistFiles[i]
+		if f.URL == "" || f.SHA256 == "" || (len(pinned) > 0 && !pinned[f.SHA256]) {
+			continue // not a file this lockfile can install
+		}
+		switch {
+		case f.Sdist:
+			sdist = f
+		case strings.HasSuffix(f.Name, "-none-any.whl"):
+			pure = f
+		case anyWheel == nil:
+			anyWheel = f
+		}
+	}
+	for _, f := range []*registry.DistFile{sdist, pure, anyWheel} {
+		if f != nil && (f != anyWheel || pure == nil) {
+			picks = append(picks, *f)
+		}
+	}
+	if len(picks) == 0 {
+		return nil, fmt.Errorf("no distribution file to scan")
+	}
+	var out []analyze.Finding
+	for _, f := range picks {
+		target := codescan.Target{ID: res.Package.ID + "/" + f.Name, Integrity: "sha256:" + f.SHA256}
+		if fs, ok := scanner.Lookup(target); ok {
+			out = append(out, fs...)
+			continue
+		}
+		data, err := client.Tarball(ctx, f.URL)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != f.SHA256 {
+			return []analyze.Finding{{Rule: "SI-INT-001", Severity: analyze.Block,
+				Message: f.Name + " does not match the registry's sha256; its code was not scanned"}}, nil
+		}
+		fs, err := codescan.PythonArchive(res.Package.Name, f.Name, data)
+		if err != nil {
+			return nil, err
+		}
+		scanner.Store(target, fs)
+		out = append(out, fs...)
+	}
+	return mergeFindings(out), nil
+}
+
+// mergeFindings keeps one finding per rule (the most severe), as the
+// scanner does within one archive.
+func mergeFindings(fs []analyze.Finding) []analyze.Finding {
+	best := map[string]analyze.Finding{}
+	for _, f := range fs {
+		if cur, ok := best[f.Rule]; !ok || f.Severity > cur.Severity {
+			best[f.Rule] = f
+		}
+	}
+	out := make([]analyze.Finding, 0, len(best))
+	for _, f := range best {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
+	return out
 }

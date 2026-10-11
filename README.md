@@ -251,7 +251,15 @@ imitate popular PyPI packages, and lockfile hashes or download URLs that PyPI do
 ```sh
 safe-install check            # in a folder with uv.lock, poetry.lock, Pipfile.lock or requirements.txt
 safe-install why urllib3      # which dependencies bring it in
+safe-install check --deep     # also download, verify and scan each package's code
 ```
+
+Python-specific checks: a recent release that dropped the PyPI Trusted Publishing provenance
+its previous release had (`SI-REC-002`), packages with no wheel, whose build code runs on
+install (`SI-BLD-001`), and with `--deep`, build code (`setup.py`, build hooks) that downloads,
+evaluates or reads secrets (`SI-BLD-002`), `.pth` files that run code at every Python start
+(`SI-PTH-001`), and the code-scan rules applied to Python source. Archives are verified against
+PyPI's sha256 and the lockfile's hashes, and scanned in memory.
 
 Installing (wheels only, with build scripts reviewed like install scripts) comes next.
 Private package indexes are not read yet. The PyPI popularity list comes from

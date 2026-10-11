@@ -86,6 +86,8 @@ type Result struct {
 
 	// From the registry, for check --deep: where the tarball is and its integrity.
 	Tarball, RegistryIntegrity string
+	// DistFiles (PyPI): the version's files with their registry hashes.
+	DistFiles []registry.DistFile
 }
 
 // Report is the analysis of a whole graph.
@@ -131,6 +133,9 @@ type Config struct {
 	Popular   *popularity.List // enables SI-POP-001 and SI-POP-002
 	Downloads DownloadSource   // weekly download counts for SI-POP-002; nil skips it
 	OSV       VulnSource       // advisories for SI-VUL-001; nil skips it
+	// Provenance (PyPI): which files carry a PEP 740 attestation, for
+	// SI-REC-002. Looked up only for releases inside its window; nil skips it.
+	Provenance ProvenanceSource
 
 	Progress func(done, total int) // called after each registry fetch; nil for none
 }
@@ -138,6 +143,11 @@ type Config struct {
 // VulnSource looks up advisories (osv.Client).
 type VulnSource interface {
 	Lookup(ctx context.Context, pkgs []osv.Package) (map[osv.Package][]osv.Vuln, error)
+}
+
+// ProvenanceSource reports, per file name, whether a file has an attestation (registry.PyPI).
+type ProvenanceSource interface {
+	Provenance(ctx context.Context, name string) (map[string]bool, error)
 }
 
 // DownloadSource returns weekly download counts (popularity.Downloads).
@@ -175,7 +185,7 @@ func appliesTo(r Rule, e ecosystem.Ecosystem) bool {
 
 // Rules is the default rule set.
 var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{},
-	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}}
+	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}, buildRule{}}
 
 // Analyze fetches metadata for every registry package in g and runs the rules.
 func Analyze(ctx context.Context, g *lockfile.Graph, f registry.Fetcher, cfg Config) *Report {
@@ -265,6 +275,9 @@ func enrich(ctx context.Context, inputs []*Input, cfg Config) []string {
 			in.Vulns = vulns[pkgs[i]]
 		}
 	}
+	if cfg.Provenance != nil {
+		warnings = append(warnings, markProvenance(ctx, inputs, cfg)...)
+	}
 	if cfg.Downloads != nil && cfg.Popular != nil {
 		// Only unpopular packages with install scripts are worth a lookup.
 		want := map[string]bool{}
@@ -293,6 +306,49 @@ func enrich(ctx context.Context, inputs []*Input, cfg Config) []string {
 	return warnings
 }
 
+// markProvenance fills DistFile.Provenance for PyPI packages whose version is
+// recent enough for SI-REC-002 (one lookup per project; older releases are
+// not worth a request).
+func markProvenance(ctx context.Context, inputs []*Input, cfg Config) []string {
+	byName := map[string][]*Input{}
+	for _, in := range inputs {
+		published := in.Doc.Published(in.Package.Version)
+		if in.Package.Ecosystem == ecosystem.PyPI && in.Meta != nil && !published.IsZero() &&
+			cfg.Now.Sub(published) <= publisherWindow {
+			byName[in.Package.Name] = append(byName[in.Package.Name], in)
+		}
+	}
+	var failed []string
+	for name, ins := range byName {
+		attested, err := cfg.Provenance.Provenance(ctx, name)
+		if err != nil {
+			failed = append(failed, name)
+			continue
+		}
+		mark := func(files []registry.DistFile) {
+			for i := range files {
+				files[i].Provenance = attested[files[i].Name]
+			}
+		}
+		doc := ins[0].Doc
+		for v, m := range doc.Versions {
+			m.Files = slices.Clone(m.Files)
+			mark(m.Files)
+			doc.Versions[v] = m
+		}
+		for _, in := range ins {
+			if m, ok := doc.Versions[in.Package.Version]; ok {
+				in.Meta = &m
+			}
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	sort.Strings(failed)
+	return []string{"provenance check skipped for " + strings.Join(failed, ", ")}
+}
+
 func hasInstallScript(m *registry.VersionMeta) bool {
 	return m.Scripts["preinstall"] != "" || m.Scripts["install"] != "" || m.Scripts["postinstall"] != ""
 }
@@ -301,6 +357,7 @@ func check(in *Input) Result {
 	res := Result{Package: in.Package}
 	if in.Meta != nil {
 		res.Tarball, res.RegistryIntegrity = in.Meta.Dist.Tarball, in.Meta.Dist.Integrity
+		res.DistFiles = in.Meta.Files
 	}
 	for _, r := range Rules {
 		if !appliesTo(r, in.Package.Ecosystem) {
