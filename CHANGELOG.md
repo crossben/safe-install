@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Python (uv, pip, Poetry, Pipenv) and PHP (Composer) projects are recognized and get a
+  clear "not supported yet" message instead of "no package.json". Groundwork for Python and
+  PHP support: packages now carry their ecosystem, OSV lookups use it, and rules declare
+  which ecosystems they apply to. Nothing changes for npm, pnpm, Yarn and bun projects.
+
 ### Fixed
 
 - `check` no longer fails at random on a cold cache in large projects ("context deadline

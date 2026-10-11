@@ -99,6 +99,9 @@ func newSession(cmd *cobra.Command, g *globalFlags) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := det.Supported(); err != nil {
+		return nil, err
+	}
 	adapter, err := pm.For(det.Kind, dir)
 	if err != nil {
 		return nil, err
@@ -567,4 +570,14 @@ func (l *lineWriter) printf(format string, args ...any) {
 	if l.err == nil {
 		_, l.err = fmt.Fprintf(l.w, format, args...)
 	}
+}
+
+// detectSupported detects the project and fails clearly for an ecosystem
+// safe-install does not handle yet (rather than "no lockfile").
+func detectSupported(dir, override string) error {
+	det, err := pm.Detect(dir, override)
+	if err != nil {
+		return err
+	}
+	return det.Supported()
 }

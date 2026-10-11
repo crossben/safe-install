@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crossben/safe-install/internal/lockfile"
-	"github.com/crossben/safe-install/internal/pm"
 )
 
 // whyLimit is how many chains are shown per package.
@@ -42,7 +41,7 @@ func runWhy(cmd *cobra.Command, g *globalFlags, query string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := pm.Detect(dir, g.pm); err != nil {
+	if err := detectSupported(dir, g.pm); err != nil {
 		return err
 	}
 	path, err := lockfile.Find(dir)

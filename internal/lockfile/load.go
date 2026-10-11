@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 // Load errors.
@@ -65,6 +67,19 @@ func LoadFile(path string) (*Graph, error) {
 // Parse parses lockfile contents. name is the lockfile's file name; dir holds
 // the project's package.json (and workspaces), read for Yarn lockfiles.
 func Parse(name string, data []byte, dir string) (*Graph, error) {
+	g, err := parseJS(name, data, dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range g.Packages {
+		if p.Ecosystem == "" {
+			p.Ecosystem = ecosystem.NPM
+		}
+	}
+	return g, nil
+}
+
+func parseJS(name string, data []byte, dir string) (*Graph, error) {
 	switch name {
 	case "bun.lockb":
 		return nil, ErrBinaryLockfile

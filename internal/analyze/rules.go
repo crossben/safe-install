@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 // SI-REC-001: version younger than the minimum release age.
@@ -34,7 +36,7 @@ const publisherWindow = 90 * 24 * time.Hour
 
 // SI-REC-002: provenance dropped, a new human publisher, or maintainers
 // added, on a recent release.
-type publisherRule struct{}
+type publisherRule struct{ npmOnly }
 
 func (publisherRule) ID() string { return "SI-REC-002" }
 
@@ -191,7 +193,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // SI-POP-001: name imitates a popular package.
-type typosquatRule struct{}
+type typosquatRule struct{ npmOnly }
 
 func (typosquatRule) ID() string { return "SI-POP-001" }
 
@@ -209,7 +211,7 @@ func (r typosquatRule) Check(in *Input) []Finding {
 const unpopular = 1000
 
 // SI-POP-002: rarely used package that runs install scripts.
-type popularityRule struct{}
+type popularityRule struct{ npmOnly }
 
 func (popularityRule) ID() string { return "SI-POP-002" }
 
@@ -264,3 +266,8 @@ func (r blockRule) Check(in *Input) []Finding {
 	}
 	return nil
 }
+
+// npmOnly scopes a rule whose data only npm provides.
+type npmOnly struct{}
+
+func (npmOnly) Ecosystems() []ecosystem.Ecosystem { return []ecosystem.Ecosystem{ecosystem.NPM} }

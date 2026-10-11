@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 // DefaultURL is the public OSV API.
@@ -25,6 +27,7 @@ const batchLimit = 1000
 // Package is an npm package version to look up.
 type Package struct {
 	Name, Version string
+	Ecosystem     ecosystem.Ecosystem // empty means npm
 }
 
 // Query is one OSV batch query.
@@ -71,7 +74,7 @@ func (c *Client) Lookup(ctx context.Context, pkgs []Package) (map[Package][]Vuln
 		}{}
 		for _, p := range batch {
 			var q Query
-			q.Package.Name, q.Package.Ecosystem, q.Version = p.Name, "npm", p.Version
+			q.Package.Name, q.Package.Ecosystem, q.Version = p.Name, p.Ecosystem.OSVName(), p.Version
 			req.Queries = append(req.Queries, q)
 		}
 		var resp struct {

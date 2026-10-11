@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/osv"
 	"github.com/crossben/safe-install/internal/popularity"
@@ -160,6 +162,17 @@ type Rule interface {
 	Check(in *Input) []Finding
 }
 
+// Scoped is implemented by rules that only make sense for some ecosystems
+// (their data source is ecosystem-specific). Other rules apply everywhere.
+type Scoped interface {
+	Ecosystems() []ecosystem.Ecosystem
+}
+
+func appliesTo(r Rule, e ecosystem.Ecosystem) bool {
+	s, ok := r.(Scoped)
+	return !ok || slices.Contains(s.Ecosystems(), e.Or())
+}
+
 // Rules is the default rule set.
 var Rules = []Rule{recencyRule{}, publisherRule{}, deprecatedRule{}, integrityRule{}, sourceRule{},
 	typosquatRule{}, popularityRule{}, vulnRule{}, blockRule{}}
@@ -242,7 +255,7 @@ func enrich(ctx context.Context, inputs []*Input, cfg Config) []string {
 	if cfg.OSV != nil && len(inputs) > 0 {
 		pkgs := make([]osv.Package, len(inputs))
 		for i, in := range inputs {
-			pkgs[i] = osv.Package{Name: in.Package.Name, Version: in.Package.Version}
+			pkgs[i] = osv.Package{Name: in.Package.Name, Version: in.Package.Version, Ecosystem: in.Package.Ecosystem}
 		}
 		vulns, err := cfg.OSV.Lookup(ctx, pkgs)
 		if err != nil {
@@ -290,6 +303,9 @@ func check(in *Input) Result {
 		res.Tarball, res.RegistryIntegrity = in.Meta.Dist.Tarball, in.Meta.Dist.Integrity
 	}
 	for _, r := range Rules {
+		if !appliesTo(r, in.Package.Ecosystem) {
+			continue
+		}
 		res.Findings = append(res.Findings, r.Check(in)...)
 	}
 	res.Score, res.Level = Score(res.Findings)

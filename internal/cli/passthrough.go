@@ -157,6 +157,10 @@ func passthrough(args []string, scriptsOff bool, in io.Reader, out, errOut io.Wr
 	}
 	kind := pm.NPM
 	if det, err := pm.Detect(dir, ""); err == nil {
+		if err := det.Supported(); err != nil {
+			_, _ = fmt.Fprintln(errOut, "safe-install:", err)
+			return ExitToolError
+		}
 		kind = det.Kind
 	}
 	cmd, err := passthroughCmd(dir, kind, args, scriptsOff)

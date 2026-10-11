@@ -63,6 +63,8 @@ func For(k Kind, dir string) (Adapter, error) {
 		return yarnClassicAdapter{}, nil
 	case Bun:
 		return bunAdapter{}, nil
+	case UV, Pip, Poetry, Pipenv, Composer:
+		return nil, (Detection{Kind: k, Source: "--pm flag"}).Supported()
 	}
 	return nil, fmt.Errorf("%w %q", ErrUnknownPM, k)
 }

@@ -398,3 +398,15 @@ func ids(ps []*Package) []string {
 	}
 	return out
 }
+
+func TestJavaScriptPackagesAreNPM(t *testing.T) {
+	g, err := Parse("package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"":{"dependencies":{"ms":"2.1.3"}},"node_modules/ms":{"version":"2.1.3"}}}`), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range g.Packages {
+		if p.Ecosystem != "npm" {
+			t.Errorf("%s: ecosystem %q", p.ID, p.Ecosystem)
+		}
+	}
+}

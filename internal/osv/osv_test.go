@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 func fakeOSV(t *testing.T, details *atomic.Int32) *httptest.Server {
@@ -53,20 +55,20 @@ func TestLookup(t *testing.T) {
 	var details atomic.Int32
 	c := &Client{BaseURL: fakeOSV(t, &details).URL}
 	got, err := c.Lookup(context.Background(), []Package{
-		{"lodash", "4.17.15"}, {"evil", "1.0.0"}, {"react", "18.3.1"}, {"lodash", "4.17.15"},
+		{Name: "lodash", Version: "4.17.15"}, {Name: "evil", Version: "1.0.0"}, {Name: "react", Version: "18.3.1"}, {Name: "lodash", Version: "4.17.15"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lodash := got[Package{"lodash", "4.17.15"}]
+	lodash := got[Package{Name: "lodash", Version: "4.17.15"}]
 	if len(lodash) != 2 || lodash[0].ID != "GHSA-1" || lodash[0].Severity != "HIGH" || lodash[0].Summary != "Prototype Pollution" {
 		t.Fatalf("lodash = %+v", lodash)
 	}
-	evil := got[Package{"evil", "1.0.0"}]
+	evil := got[Package{Name: "evil", Version: "1.0.0"}]
 	if len(evil) != 1 || !evil[0].Malicious() {
 		t.Fatalf("evil = %+v", evil)
 	}
-	if len(got[Package{"react", "18.3.1"}]) != 0 {
+	if len(got[Package{Name: "react", Version: "18.3.1"}]) != 0 {
 		t.Fatal("react has vulns")
 	}
 	// Details fetched once per advisory; MAL entries need none.
@@ -112,7 +114,34 @@ func TestLookupError(t *testing.T) {
 		http.Error(w, "down", http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	if _, err := (&Client{BaseURL: srv.URL}).Lookup(context.Background(), []Package{{"a", "1"}}); err == nil {
+	if _, err := (&Client{BaseURL: srv.URL}).Lookup(context.Background(), []Package{{Name: "a", Version: "1"}}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestQueryUsesTheEcosystem(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Queries []Query `json:"queries"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, q := range req.Queries {
+			seen = append(seen, q.Package.Ecosystem+":"+q.Package.Name)
+		}
+		_, _ = w.Write([]byte(`{"results":[{},{},{}]}`))
+	}))
+	defer srv.Close()
+	_, err := (&Client{BaseURL: srv.URL}).Lookup(context.Background(), []Package{
+		{Name: "lodash", Version: "1"},
+		{Name: "requests", Version: "2", Ecosystem: ecosystem.PyPI},
+		{Name: "monolog/monolog", Version: "3", Ecosystem: ecosystem.Packagist},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"npm:lodash", "PyPI:requests", "Packagist:monolog/monolog"}
+	if len(seen) != 3 || seen[0] != want[0] || seen[1] != want[1] || seen[2] != want[2] {
+		t.Fatalf("queries = %v, want %v", seen, want)
 	}
 }

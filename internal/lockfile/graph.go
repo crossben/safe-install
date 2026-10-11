@@ -6,6 +6,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/crossben/safe-install/internal/ecosystem"
 )
 
 // Format identifies a lockfile format.
@@ -31,6 +33,8 @@ type Package struct {
 	Integrity string // SRI hash, when the lockfile records one
 	Direct    bool   // declared by the project (or a workspace)
 	Dev       bool   // reachable only through devDependencies
+
+	Ecosystem ecosystem.Ecosystem // where the package comes from (npm for every JavaScript lockfile)
 
 	Dependencies []string // IDs, sorted
 }

@@ -11,7 +11,6 @@ import (
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
-	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/report"
 	"github.com/crossben/safe-install/internal/scripts"
 )
@@ -42,7 +41,7 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	if _, err := pm.Detect(dir, g.pm); err != nil {
+	if err := detectSupported(dir, g.pm); err != nil {
 		return err
 	}
 	path, err := lockfile.Find(dir)
