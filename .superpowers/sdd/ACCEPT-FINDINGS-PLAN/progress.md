@@ -59,3 +59,25 @@
 - Converted all 15 Finding creations in rules.go from positional to named field syntax
 - All existing tests pass: 33 tests in analyze package, 27 tests in policy package
 
+**Task 3: Scan logic** - COMPLETE (4/4 steps done, all tests pass)
+- Implemented ApplyAcceptances to mark findings with Acceptance field where matched
+- Implemented ComputeFileHash for SHA256 hash computation
+- Implemented CountByStatus to separate findings by severity and acceptance status
+- All tests pass: 7 new tests for acceptance filtering, 6 tests verified
+
+**Task 4: Output formatters (PARTIAL)** - IN PROGRESS
+- Added Accepted field (interface{}) to jsonFinding struct
+- Updated jsonFinding creations in jsonout.go and approveother.go to use named fields
+- Compilation successful; JSON output now carries acceptance information
+
+**Tasks 5-13: Remaining**
+- Task 5: Scan, check, install commands — apply acceptances and fail-on logic
+- Task 6: accept command — CLI interface (TTY-gated, hash verification, --revoke/--global)
+- Task 7: GitHub Action — reads acceptances, PR comment with acceptance section
+- Task 8: LLM rules — forbid agents from accepting (rules printed by safe-install llm)
+- Task 9: Stale acceptance pruning — detect and --prune-accepted flag
+- Task 10: Optional PowerShell -EncodedCommand detection — reduce false positives
+- Task 11: README documentation — "Accepting a reviewed finding" section with vite example
+- Task 12: CHANGELOG and version bump — v0.4.0, document all changes
+- Task 13: Release and test — verify everything works end-to-end
+

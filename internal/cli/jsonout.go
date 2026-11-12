@@ -13,9 +13,10 @@ import (
 // contract for tools such as the VS Code extension: add fields, never rename.
 
 type jsonFinding struct {
-	Rule     string `json:"rule"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
+	Rule     string      `json:"rule"`
+	Severity string      `json:"severity"`
+	Message  string      `json:"message"`
+	Accepted interface{} `json:"accepted,omitempty"` // *policy.Acceptance if accepted
 }
 
 type jsonScriptsPackage struct {
@@ -53,7 +54,7 @@ func scriptsJSON(cands []*scripts.Candidate) []jsonScriptsPackage {
 			p.Scripts[stage] = command
 		}
 		for _, f := range c.Findings {
-			p.Findings = append(p.Findings, jsonFinding{f.Rule, f.Severity.String(), f.Message})
+			p.Findings = append(p.Findings, jsonFinding{Rule: f.Rule, Severity: f.Severity.String(), Message: f.Message, Accepted: f.Accepted})
 		}
 		out = append(out, p)
 	}
