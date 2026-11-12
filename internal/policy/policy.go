@@ -18,12 +18,13 @@ const FileName = ".safe-install.json"
 
 // File is the policy file format.
 type File struct {
-	MinReleaseAge        string              `json:"minReleaseAge,omitempty"`        // e.g. "72h", "3d", "0"
-	MinReleaseAgeExclude []string            `json:"minReleaseAgeExclude,omitempty"` // package name globs
-	FailOn               string              `json:"failOn,omitempty"`               // check threshold
-	AllowScripts         map[string]Approval `json:"allowScripts,omitempty"`         // by package name
-	BlockPackages        []string            `json:"blockPackages,omitempty"`        // name globs never installed or run
-	OrgPolicy            string              `json:"orgPolicy,omitempty"`            // organization policy: path or https URL
+	MinReleaseAge        string                    `json:"minReleaseAge,omitempty"`        // e.g. "72h", "3d", "0"
+	MinReleaseAgeExclude []string                  `json:"minReleaseAgeExclude,omitempty"` // package name globs
+	FailOn               string                    `json:"failOn,omitempty"`               // check threshold
+	AllowScripts         map[string]Approval       `json:"allowScripts,omitempty"`         // by package name
+	AcceptFindings       map[string][]Acceptance   `json:"acceptFindings,omitempty"`       // by package name
+	BlockPackages        []string                  `json:"blockPackages,omitempty"`        // name globs never installed or run
+	OrgPolicy            string                    `json:"orgPolicy,omitempty"`            // organization policy: path or https URL
 }
 
 // Trust modes for an approval.
@@ -79,6 +80,46 @@ func (a Approval) validate(name string) error {
 	return nil
 }
 
+// Acceptance records a code finding that has been reviewed and judged harmless.
+type Acceptance struct {
+	Version string `json:"version,omitempty"`    // version reviewed
+	Rule    string `json:"rule"`                 // SI-CODE-001, etc; required
+	File    string `json:"file"`                 // relative path in package
+	Hash    string `json:"hash"`                 // sha256:<hash> of file content
+	Reason  string `json:"reason"`               // required: why it's safe
+	By      string `json:"by,omitempty"`         // who accepted it
+	At      string `json:"at,omitempty"`         // date accepted (YYYY-MM-DD)
+	Expires string `json:"expires,omitempty"`    // last valid day (YYYY-MM-DD)
+}
+
+// Expired reports whether the acceptance's last valid day is before now.
+func (a Acceptance) Expired(now time.Time) bool {
+	if a.Expires == "" {
+		return false
+	}
+	last, err := time.Parse("2006-01-02", a.Expires)
+	if err != nil {
+		return true // unreadable: treat as expired rather than forever
+	}
+	return now.UTC().After(last.Add(24*time.Hour - time.Nanosecond))
+}
+
+// Validate checks that required fields are present and properly formatted.
+func (a Acceptance) Validate() error {
+	if a.Rule == "" {
+		return fmt.Errorf("rule required")
+	}
+	if a.Reason == "" {
+		return fmt.Errorf("reason required")
+	}
+	if a.Expires != "" {
+		if _, err := time.Parse("2006-01-02", a.Expires); err != nil {
+			return fmt.Errorf("invalid expires format: %w", err)
+		}
+	}
+	return nil
+}
+
 // Lookup finds the approval for a package: its exact name first, then the
 // most specific matching glob. key is the allowScripts entry that matched.
 func (p *Policy) Lookup(name string) (a Approval, key string, ok bool) {
@@ -94,6 +135,20 @@ func (p *Policy) Lookup(name string) (a Approval, key string, ok bool) {
 		}
 	}
 	return a, key, ok
+}
+
+// LookupAcceptance finds an acceptance matching package, version, rule, file, and hash exactly.
+func (p *Policy) LookupAcceptance(pkg, ver, rule, file, hash string) (Acceptance, bool) {
+	accs, ok := p.AcceptFindings[pkg]
+	if !ok {
+		return Acceptance{}, false
+	}
+	for _, acc := range accs {
+		if acc.Version == ver && acc.Rule == rule && acc.File == file && acc.Hash == hash {
+			return acc, true
+		}
+	}
+	return Acceptance{}, false
 }
 
 // Policy is the effective policy: the organization policy, overlaid by the
@@ -122,7 +177,7 @@ func GlobalPath() (string, error) {
 
 // Load reads the global config and the project file in dir; either may be missing.
 func Load(dir string) (*Policy, error) {
-	p := &Policy{File: File{AllowScripts: map[string]Approval{}}, ProjectPath: filepath.Join(dir, FileName)}
+	p := &Policy{File: File{AllowScripts: map[string]Approval{}, AcceptFindings: map[string][]Acceptance{}}, ProjectPath: filepath.Join(dir, FileName)}
 	globalPath, err := GlobalPath()
 	if err != nil {
 		return nil, err
@@ -171,6 +226,9 @@ func (p *Policy) overlay(f *File) {
 	for name, a := range f.AllowScripts {
 		p.AllowScripts[name] = a
 	}
+	for pkg, accs := range f.AcceptFindings {
+		p.AcceptFindings[pkg] = append(p.AcceptFindings[pkg], accs...)
+	}
 }
 
 // Excluded reports whether name matches a minReleaseAgeExclude glob.
@@ -195,6 +253,9 @@ func Read(path string) (*File, error) {
 	}
 	if f.AllowScripts == nil {
 		f.AllowScripts = map[string]Approval{}
+	}
+	if f.AcceptFindings == nil {
+		f.AcceptFindings = map[string][]Acceptance{}
 	}
 	return &f, nil
 }
@@ -224,10 +285,60 @@ func Revoke(path, name string) (bool, error) {
 	return removed, err
 }
 
+// AcceptFinding records an acceptance in the policy file at path, creating it if needed.
+func AcceptFinding(path, pkg, ver, rule, file, hash, reason, expiry string) error {
+	a := Acceptance{
+		Version: ver,
+		Rule:    rule,
+		File:    file,
+		Hash:    hash,
+		Reason:  reason,
+		Expires: expiry,
+	}
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	return update(path, func(f *File) bool {
+		if a.At == "" {
+			a.At = time.Now().UTC().Format("2006-01-02")
+		}
+		if a.By == "" {
+			a.By = os.Getenv("USER")
+			if a.By == "" {
+				a.By = "unknown"
+			}
+		}
+		f.AcceptFindings[pkg] = append(f.AcceptFindings[pkg], a)
+		return true
+	})
+}
+
+// RevokeFinding removes a finding acceptance; it reports whether there was one.
+func RevokeFinding(path, pkg, ver, rule, file string) (bool, error) {
+	removed := false
+	err := update(path, func(f *File) bool {
+		if accs, ok := f.AcceptFindings[pkg]; ok {
+			for i, acc := range accs {
+				if acc.Rule == rule && acc.File == file {
+					// Remove this acceptance
+					f.AcceptFindings[pkg] = append(accs[:i], accs[i+1:]...)
+					if len(f.AcceptFindings[pkg]) == 0 {
+						delete(f.AcceptFindings, pkg)
+					}
+					removed = true
+					return true
+				}
+			}
+		}
+		return false
+	})
+	return removed, err
+}
+
 func update(path string, change func(*File) bool) error {
 	f, err := Read(path)
 	if errors.Is(err, os.ErrNotExist) {
-		f, err = &File{AllowScripts: map[string]Approval{}}, nil
+		f, err = &File{AllowScripts: map[string]Approval{}, AcceptFindings: map[string][]Acceptance{}}, nil
 	}
 	if err != nil {
 		return err

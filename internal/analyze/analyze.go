@@ -71,9 +71,10 @@ func ParseLevel(s string) (Level, error) {
 
 // Finding is one rule hit with its evidence.
 type Finding struct {
-	Rule     string   `json:"rule"`
-	Severity Severity `json:"-"`
-	Message  string   `json:"message"`
+	Rule     string                 `json:"rule"`
+	Severity Severity               `json:"-"`
+	Message  string                 `json:"message"`
+	Accepted interface{}            `json:"accepted,omitempty"` // *policy.Acceptance, nil if not accepted
 }
 
 // Result is the verdict for one package.
