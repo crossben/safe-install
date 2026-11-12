@@ -335,6 +335,35 @@ func RevokeFinding(path, pkg, ver, rule, file string) (bool, error) {
 	return removed, err
 }
 
+// PruneAcceptances removes all expired acceptances from a policy file.
+// It reports the number of acceptances removed.
+func PruneAcceptances(path string) (int, error) {
+	pruned := 0
+	now := time.Now()
+	err := update(path, func(f *File) bool {
+		changed := false
+		for pkg, accs := range f.AcceptFindings {
+			var kept []Acceptance
+			for _, acc := range accs {
+				if !acc.Expired(now) {
+					kept = append(kept, acc)
+				} else {
+					changed = true
+					pruned++
+				}
+			}
+			if len(kept) == 0 {
+				delete(f.AcceptFindings, pkg)
+				changed = true
+			} else if len(kept) < len(accs) {
+				f.AcceptFindings[pkg] = kept
+			}
+		}
+		return changed
+	})
+	return pruned, err
+}
+
 func update(path string, change func(*File) bool) error {
 	f, err := Read(path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -16,7 +16,8 @@ This project installs its dependencies through safe-install (https://github.com/
 Approving an install script, a Python source build or a Composer plugin lets that package run code on this machine. Only the human decides that. You must never:
 
 - run `safe-install approve`, or use `--force` or `--yes`;
-- edit `allowScripts` in `.safe-install.json` or the user config, or `allow-plugins` in `composer.json`;
+- run `safe-install accept` to mark code findings as reviewed and safe;
+- edit `allowScripts` or `acceptFindings` in `.safe-install.json` or the user config, or `allow-plugins` in `composer.json`;
 - lower `minReleaseAge` / `--min-age`, or add `blockPackages` exceptions;
 - re-run the install with npm, pnpm, yarn, bun, uv, pip or composer directly to get scripts, builds or plugins to run.
 

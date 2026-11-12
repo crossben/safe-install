@@ -377,3 +377,62 @@ func findIn(s, substr string) bool {
 	}
 	return false
 }
+
+func TestPruneAcceptances(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".safe-install.json")
+
+	// Setup: write acceptances with various expiry dates
+	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123", "expired", "2026-01-01")
+	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-002", "dist/other.js", "sha256:def456", "expired2", "2026-06-01")
+	AcceptFinding(path, "sharp", "0.33.0", "SI-CODE-003", "dist/index.js", "sha256:xyz789", "future", "2027-12-31")
+	AcceptFinding(path, "esbuild", "0.25.10", "SI-CODE-004", "dist/build.js", "sha256:aaa111", "no expiry", "")
+
+	// Verify all 4 are present before pruning
+	f, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	totalBefore := 0
+	for _, accs := range f.AcceptFindings {
+		totalBefore += len(accs)
+	}
+	if totalBefore != 4 {
+		t.Errorf("Before prune: found %d acceptances, want 4", totalBefore)
+	}
+
+	// Prune expired acceptances
+	pruned, err := PruneAcceptances(path)
+	if err != nil {
+		t.Fatalf("PruneAcceptances() error = %v", err)
+	}
+
+	// Should have pruned 2 (the ones with expired dates)
+	if pruned != 2 {
+		t.Errorf("PruneAcceptances() pruned = %d, want 2", pruned)
+	}
+
+	// Verify only 2 remain
+	f, err = Read(path)
+	if err != nil {
+		t.Fatalf("Read() after prune error = %v", err)
+	}
+	totalAfter := 0
+	for _, accs := range f.AcceptFindings {
+		totalAfter += len(accs)
+	}
+	if totalAfter != 2 {
+		t.Errorf("After prune: found %d acceptances, want 2", totalAfter)
+	}
+
+	// Verify the right ones remain
+	if len(f.AcceptFindings["sharp"]) != 1 {
+		t.Errorf("sharp acceptances after prune = %d, want 1", len(f.AcceptFindings["sharp"]))
+	}
+	if len(f.AcceptFindings["esbuild"]) != 1 {
+		t.Errorf("esbuild acceptances after prune = %d, want 1", len(f.AcceptFindings["esbuild"]))
+	}
+	if _, ok := f.AcceptFindings["vite"]; ok {
+		t.Errorf("vite should be removed after pruning all its acceptances")
+	}
+}
