@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- **Accept reviewed findings**: `safe-install accept` marks code findings as reviewed and
+  harmless, so they no longer fail scans but remain visible in reports. Acceptances are
+  pinned to a package version, rule, file, and SHA256 hash; they expire on a given date and
+  can be revoked. Organization policy can forbid block-level acceptances. The command runs
+  only in a terminal, preventing CI from accepting findings. Accepted findings appear in
+  reports as `ACCEPTED (reason)` and are counted separately in summaries.
+- Acceptance filtering in `scan`, `check`, and `install` commands: all findings are checked
+  against acceptances and marked as accepted where they match.
+- `safe-install accept --revoke` removes an acceptance; `--expires 90d` or a date sets
+  expiry; `--global` stores acceptances in the user config; `--force` overrides org policy.
+- LLM agents are instructed that they must never run `safe-install accept` or edit
+  `acceptFindings` in configuration; only humans can mark findings as safe.
+- Stale acceptance pruning via `PruneAcceptances()` for cleanup and maintenance.
+
+### Changed
+
+- Code scanning output format now includes `"accepted"` field on findings in JSON output.
+- Text report summaries now show accepted findings count: `"N block, M high (K accepted), ..."`
+- Findings marked as accepted remain visible in all report formats (text, JSON, SARIF).
+
 ## 0.3.0
 
 ### Added

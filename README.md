@@ -192,6 +192,39 @@ safe-install cache info           # cache size per part; `cache clean` empties i
 `minReleaseAgeExclude` exempts packages from the release-age findings. The age passed to
 the package manager itself applies to every package.
 
+### Accepting a reviewed finding
+
+Code scanning rules sometimes flag code that's harmless: registry-polled sources, well-known patterns, or safe implementations. After review, you can record that a finding is safe:
+
+```sh
+safe-install accept vite@8.3.8 SI-CODE-001 --reason "registry entries only" --expires 2027-06-30
+```
+
+The command marks the finding in `.safe-install.json`:
+
+```json
+{
+  "acceptFindings": {
+    "vite": [
+      {
+        "version": "8.3.8",
+        "rule": "SI-CODE-001",
+        "file": "",
+        "hash": "",
+        "reason": "registry entries only",
+        "expires": "2027-06-30",
+        "by": "you@example.com",
+        "at": "2026-11-12"
+      }
+    ]
+  }
+}
+```
+
+Accepted findings remain visible in reports (marked as `ACCEPTED`) but do not fail scans. Commit the file so your team shares the acceptances. Use `--revoke` to remove an acceptance, `--expires 90d` for a duration, or `--global` to store it in your user config instead. `--force` lets you override an org policy that forbids accepting.
+
+The `accept` command runs only in a terminal and forbids use in CI: only humans review and accept findings. Acceptances expire on the date given, and can be pruned with `safe-install cache clean`.
+
 ### Organization policy
 
 A security team can publish one policy for every repository: a JSON file in the same
