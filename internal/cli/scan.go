@@ -13,6 +13,7 @@ import (
 	"github.com/crossben/safe-install/internal/codescan"
 	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/report"
 	"github.com/crossben/safe-install/internal/scripts"
 )
@@ -81,12 +82,18 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	// Only packages unpacked on disk were scanned; the rest (other platforms'
 	// optional binaries, Plug'n'Play zips) are counted as skipped.
 	rep := &analyze.Report{Format: graph.Format, SkippedWhy: "not installed on this machine"}
+	pol, err := policy.Load(dir)
+	if err != nil {
+		return err
+	}
 	for _, p := range graph.Sorted() {
 		if _, ok := installed[p.ID]; !ok {
 			rep.Skipped++
 			continue
 		}
 		res := analyze.Result{Package: p, Findings: code[p.ID]}
+		// Apply acceptances to findings (package+version level for now)
+		res.Findings = ApplyAcceptances(res.Findings, pol, p.Name, p.Version, "", "")
 		res.Score, res.Level = analyze.Score(res.Findings)
 		rep.Results = append(rep.Results, res)
 	}
@@ -112,8 +119,10 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	if failOn != analyze.LevelNone && rep.Worst() >= failOn {
-		return &exitError{ExitPolicyFailure, errors.New("found " + rep.Worst().String() + "-risk code (--fail-on " + failOn.String() + ")")}
+	// Check fail-on threshold against unaccepted findings only
+	if failOn != analyze.LevelNone && WorstUnacceptedLevel(rep.Results) >= failOn {
+		worst := WorstUnacceptedLevel(rep.Results)
+		return &exitError{ExitPolicyFailure, errors.New("found " + worst.String() + "-risk code (--fail-on " + failOn.String() + ")")}
 	}
 	return nil
 }

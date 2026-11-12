@@ -28,9 +28,21 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 	ew.printf("\n")
 
 	counts := map[analyze.Level]int{}
+	acceptedCount := 0
 	for _, res := range r.Results {
 		if res.Err == nil {
 			counts[res.Level]++
+			// Count accepted findings separately (not included in level count)
+			for _, f := range res.Findings {
+				if f.Accepted != nil {
+					acceptedCount++
+					// Adjust level count for accepted findings
+					lvl, _ := analyze.ParseLevel(f.Severity.String())
+					if lvl != analyze.LevelNone {
+						counts[lvl]--
+					}
+				}
+			}
 		}
 	}
 	for lvl := analyze.LevelBlock; lvl > analyze.LevelNone; lvl-- {
@@ -40,7 +52,11 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 			}
 			ew.printf("\n%-6s %s  (score %d%s)\n", strings.ToUpper(lvl.String()), res.Package.ID, res.Score, tags(res))
 			for _, f := range res.Findings {
-				ew.printf("       %s  %s\n", f.Rule, f.Message)
+				if f.Accepted != nil {
+					ew.printf("       ACCEPTED (%s)  %s  %s\n", f.Rule, f.Message, "reviewed and safe")
+				} else {
+					ew.printf("       %s  %s\n", f.Rule, f.Message)
+				}
 			}
 		}
 	}
@@ -55,9 +71,14 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 			}
 		}
 	}
-	ew.printf("\n%d block, %d high, %d medium, %d low, %d clean\n",
-		counts[analyze.LevelBlock], counts[analyze.LevelHigh], counts[analyze.LevelMedium],
-		counts[analyze.LevelLow], counts[analyze.LevelNone])
+	// Format summary: show accepted count in parentheses if any
+	summary := fmt.Sprintf("%d block, %d high, %d medium, %d low",
+		counts[analyze.LevelBlock], counts[analyze.LevelHigh], counts[analyze.LevelMedium], counts[analyze.LevelLow])
+	if acceptedCount > 0 {
+		summary += fmt.Sprintf(" (%d accepted)", acceptedCount)
+	}
+	summary += fmt.Sprintf(", %d clean\n", counts[analyze.LevelNone])
+	ew.printf("\n%s", summary)
 	return ew.err
 }
 

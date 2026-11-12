@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"crypto/sha256"
@@ -68,4 +68,24 @@ func CountByStatus(findings []analyze.Finding) map[string]map[string]int {
 	}
 
 	return counts
+}
+
+// WorstUnacceptedLevel returns the worst severity level of unaccepted findings in a report.
+// Accepted findings are excluded from the calculation.
+func WorstUnacceptedLevel(results []analyze.Result) analyze.Level {
+	worstLevel := analyze.LevelNone
+	for _, res := range results {
+		for _, f := range res.Findings {
+			// Skip accepted findings
+			if f.Accepted != nil {
+				continue
+			}
+			level := f.Severity.String()
+			fLevel, _ := analyze.ParseLevel(level)
+			if fLevel > worstLevel {
+				worstLevel = fLevel
+			}
+		}
+	}
+	return worstLevel
 }

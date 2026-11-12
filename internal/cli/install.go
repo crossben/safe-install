@@ -252,6 +252,8 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 	for _, c := range cands {
 		c.Findings = append(scripts.Scan(c), scriptRelevant(registryFindings[c.Package.ID])...)
 		c.Findings = append(c.Findings, s.code[c.Package.ID]...)
+		// Apply acceptances to all findings
+		c.Findings = ApplyAcceptances(c.Findings, s.pol, c.Package.Name, c.Package.Version, "", "")
 		state, f := scripts.ApprovalState(c, s.pol, time.Now(), s.provenance())
 		c.State = state
 		if f != nil {
