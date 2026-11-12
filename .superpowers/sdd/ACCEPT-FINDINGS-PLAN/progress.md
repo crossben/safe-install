@@ -54,8 +54,8 @@
 - Updated policy Load, Read, overlay, update functions
 - All tests pass: 27 total tests in policy package, including new acceptance tests
 
-**Task 2: Finding struct - Ruling: Use interface{} instead of *policy.Acceptance**
-- Reason: Go struct literals don't support partial positional arguments. Adding a typed field breaks 15+ existing Finding creations in rules.go that use positional syntax.
-- Decision: Use interface{} as the Accepted field type to avoid import dependency and allow any future acceptance type. This keeps existing code working without modification.
-- Cost if wrong: Type safety lost for Accepted field, but acceptable since it's omitempty and for internal use only.
+**Task 2: Finding struct** - COMPLETE (3/3 steps done, all tests pass)
+- Added Accepted field (interface{} type) to Finding struct for acceptance tracking
+- Converted all 15 Finding creations in rules.go from positional to named field syntax
+- All existing tests pass: 33 tests in analyze package, 27 tests in policy package
 
