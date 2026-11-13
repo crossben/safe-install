@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/osv"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 )
@@ -129,6 +131,19 @@ func TestRules(t *testing.T) {
 	res := result(t, r, "newpub@1.1.0")
 	if !hasRule(res, "SI-REC-002", High) || !hasRule(res, "SI-REC-002", Low) || res.Level != LevelHigh {
 		t.Errorf("newpub: %+v", res)
+	}
+	var ev []string
+	for _, f := range res.Findings {
+		ev = append(ev, f.Evidence)
+		if strings.Contains(f.Message, f.Evidence) && f.Evidence != "" {
+			t.Errorf("evidence %q repeats the message", f.Evidence)
+		}
+	}
+	if want := "publisher mallory,maintainers added: mallory"; strings.Join(ev, ",") != want {
+		t.Errorf("newpub evidence = %q, want %q", strings.Join(ev, ","), want)
+	}
+	if res := result(t, r, "fresh@1.1.0"); !regexp.MustCompile(`^published \d{4}-\d{2}-\d{2}$`).MatchString(res.Findings[0].Evidence) {
+		t.Errorf("fresh evidence = %q", res.Findings[0].Evidence)
 	}
 	if res := result(t, r, "deprecated@1.0.0"); !hasRule(res, "SI-DEP-001", Low) || res.Level != LevelLow {
 		t.Errorf("deprecated: %+v", res)
@@ -420,5 +435,42 @@ func TestScoreCountsEachRuleOnce(t *testing.T) {
 	}
 	if _, level := Score([]Finding{{Rule: "SI-VUL-001", Severity: Medium}, {Rule: "SI-VUL-001", Severity: Block}}); level != LevelBlock {
 		t.Errorf("a blocking finding must still block, got %s", level)
+	}
+}
+
+func TestAcceptable(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		f     Finding
+		force bool
+		want  bool
+	}{
+		{"low", Finding{Rule: "SI-REC-002", Severity: Low}, false, true},
+		{"high registry finding", Finding{Rule: "SI-REC-002", Severity: High}, false, true},
+		{"block", Finding{Rule: "SI-INT-001", Severity: Block}, false, false},
+		{"block even forced", Finding{Rule: "SI-INT-001", Severity: Block}, true, false},
+		{"malware", Finding{Rule: "SI-VUL-001", Severity: Block}, true, false},
+		{"high vuln", Finding{Rule: "SI-VUL-001", Severity: High}, false, false},
+		{"high vuln forced", Finding{Rule: "SI-VUL-001", Severity: High}, true, true},
+		{"install script", Finding{Rule: "SI-SCR-003", Severity: High}, true, false},
+		{"policy", Finding{Rule: "SI-POL-001", Severity: Low}, true, false},
+		{"build code", Finding{Rule: "SI-BLD-002", Severity: High}, true, false},
+		{"medium vuln", Finding{Rule: "SI-VUL-001", Severity: Medium}, false, true},
+	} {
+		ok, why := Acceptable(tt.f, tt.force)
+		if ok != tt.want || (!ok && why == "") {
+			t.Errorf("%s: Acceptable = %v, %q", tt.name, ok, why)
+		}
+	}
+}
+
+func TestScoreIgnoresAcceptedFindings(t *testing.T) {
+	acc := &policy.Acceptance{Reason: "reviewed"}
+	score, level := Score([]Finding{{Rule: "SI-REC-002", Severity: High, Accepted: acc}, {Rule: "SI-DEP-001", Severity: Low}})
+	if score != 10 || level != LevelLow {
+		t.Errorf("score %d level %v", score, level)
+	}
+	if _, level := Score([]Finding{{Rule: "SI-REC-002", Severity: High, Accepted: acc}}); level != LevelNone {
+		t.Errorf("level = %v", level)
 	}
 }

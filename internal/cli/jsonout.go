@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/scripts"
 )
 
@@ -13,10 +14,12 @@ import (
 // contract for tools such as the VS Code extension: add fields, never rename.
 
 type jsonFinding struct {
-	Rule     string      `json:"rule"`
-	Severity string      `json:"severity"`
-	Message  string      `json:"message"`
-	Accepted interface{} `json:"accepted,omitempty"` // *policy.Acceptance if accepted
+	Rule     string             `json:"rule"`
+	Severity string             `json:"severity"`
+	Message  string             `json:"message"`
+	File     string             `json:"file,omitempty"`     // code findings: path in the package
+	Evidence string             `json:"evidence,omitempty"` // package-level findings
+	Accepted *policy.Acceptance `json:"accepted,omitempty"` // set if a recorded acceptance applies
 }
 
 type jsonScriptsPackage struct {
@@ -54,7 +57,7 @@ func scriptsJSON(cands []*scripts.Candidate) []jsonScriptsPackage {
 			p.Scripts[stage] = command
 		}
 		for _, f := range c.Findings {
-			p.Findings = append(p.Findings, jsonFinding{Rule: f.Rule, Severity: f.Severity.String(), Message: f.Message, Accepted: f.Accepted})
+			p.Findings = append(p.Findings, jsonFinding{Rule: f.Rule, Severity: f.Severity.String(), Message: f.Message, File: f.File, Evidence: f.Evidence, Accepted: f.Accepted})
 		}
 		out = append(out, p)
 	}

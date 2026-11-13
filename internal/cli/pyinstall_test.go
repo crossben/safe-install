@@ -227,7 +227,7 @@ func TestPthOwnership(t *testing.T) {
 	write("_virtualenv.pth", "import _virtualenv\n")
 	write("dropped.pth", "import sneaky\n")
 	got := map[string]string{}
-	for _, f := range pthFindings(dir, "app") {
+	for _, f := range pthFindings(dir, "app", nil, nil, nil) {
 		got[strings.Fields(f.Message)[0]+" "+f.Severity.String()] = f.Message
 	}
 	want := []string{"evil high", "an medium"} // "an unknown package" dropped.pth
@@ -260,5 +260,71 @@ func TestPythonIndexHosts(t *testing.T) {
 	n, seen := otherIndexPackages(g, hosts)
 	if n != 1 || !slices.Equal(seen, []string{"pypi.corp.example"}) || g.Packages["c@1"].Resolved != "https://unknown.example/simple" {
 		t.Fatalf("n=%d seen=%v c=%q (an unconfigured host must stay visible to SI-INT-002)", n, seen, g.Packages["c@1"].Resolved)
+	}
+}
+
+const evilPth = "import os; exec(__import__('base64').b64decode('cHJpbnQ='))\n"
+
+// pthUVProject is uvProject with docopt's build approved and an environment
+// whose six distribution installed a code-running six.pth.
+func pthUVProject(t *testing.T) (dir, pth string) {
+	t.Helper()
+	fakeUV(t)
+	dir = uvProject(t)
+	prev := isInteractive
+	isInteractive = func() bool { return false }
+	t.Cleanup(func() { isInteractive = prev })
+	if err := policy.Approve(filepath.Join(dir, policy.FileName), "docopt", policy.Approval{Version: "0.6.2", Hash: "sha256:" + docoptSHA}); err != nil {
+		t.Fatal(err)
+	}
+	site := filepath.Join(dir, ".venv", "lib", "python3.12", "site-packages")
+	writeFile(t, filepath.Join(site, "six-1.16.0.dist-info", "RECORD"), "six.pth,,\n")
+	pth = filepath.Join(site, "six.pth")
+	writeFile(t, pth, evilPth)
+	return dir, pth
+}
+
+func acceptPth(t *testing.T, dir, pth string) {
+	t.Helper()
+	hash, err := sha256File(filepath.Dir(pth), "six.pth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := map[string]any{"version": "1.16.0", "rule": "SI-PTH-001", "file": "six.pth", "hash": hash, "reason": "reviewed", "by": "ben"}
+	f, err := policy.Read(filepath.Join(dir, policy.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(f)
+	var m map[string]any
+	_ = json.Unmarshal(data, &m)
+	m["acceptFindings"] = map[string]any{"six": []any{acc}}
+	data, _ = json.Marshal(m)
+	writeFile(t, filepath.Join(dir, policy.FileName), string(data))
+}
+
+func TestPythonInstallAcceptedPthPassesCI(t *testing.T) {
+	if runtime.GOOS == "windows" || testing.Short() {
+		t.Skip("runs a fake uv")
+	}
+	dir, pth := pthUVProject(t)
+	if _, err := runCLI(t, "install", "--frozen-lockfile", "--ci"); exitCode(err) != ExitPolicyFailure {
+		t.Fatalf("without acceptance: %v", err)
+	}
+	acceptPth(t, dir, pth)
+	if out, err := runCLI(t, "install", "--frozen-lockfile", "--ci"); err != nil {
+		t.Fatalf("accepted .pth still fails: %v\n%s", err, out)
+	}
+}
+
+func TestPythonInstallChangedPthIsFlaggedAgain(t *testing.T) {
+	if runtime.GOOS == "windows" || testing.Short() {
+		t.Skip("runs a fake uv")
+	}
+	dir, pth := pthUVProject(t)
+	acceptPth(t, dir, pth)
+	writeFile(t, pth, evilPth+"# changed\n")
+	if _, err := runCLI(t, "install", "--frozen-lockfile", "--ci"); exitCode(err) != ExitPolicyFailure {
+		t.Fatalf("changed .pth must fail again: %v", err)
 	}
 }

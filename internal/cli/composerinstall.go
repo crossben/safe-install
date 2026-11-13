@@ -19,6 +19,7 @@ import (
 	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/report"
 )
 
 // Composer installs. Dependencies' scripts never run in Composer; the
@@ -164,6 +165,7 @@ func reviewPlugins(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, w *li
 	cfg.RegistryHosts, cfg.Downloads = composerHosts(), nil
 	rep := analyze.Analyze(cmd.Context(), sub, fetcher, cfg)
 	deepScan(cmd, g, rep)
+	applyAcceptances(rep, pol, nil, cmd.ErrOrStderr())
 	for _, msg := range rep.Warnings {
 		w.printf("safe-install: %s\n", msg)
 	}
@@ -212,7 +214,11 @@ func reviewPlugins(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, w *li
 func describeResult(w *lineWriter, r analyze.Result) {
 	w.printf("\n%s  risk: %s\n", r.Package.ID, strings.ToUpper(r.Level.String()))
 	for _, f := range r.Findings {
-		if f.Rule != "SI-PLG-001" && f.Rule != "SI-BLD-001" {
+		switch {
+		case f.Rule == "SI-PLG-001" || f.Rule == "SI-BLD-001":
+		case f.Accepted != nil:
+			w.printf("  - %s  %s\n    ACCEPTED (%s)\n", f.Rule, f.Message, report.AcceptedNote(f.Accepted))
+		default:
 			w.printf("  ! %s  %s\n", f.Rule, f.Message)
 		}
 	}

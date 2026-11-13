@@ -27,7 +27,8 @@ func (r recencyRule) Check(in *Input) []Finding {
 		return nil
 	}
 	return []Finding{{Rule: r.ID(), Severity: Medium, Message: fmt.Sprintf("published %s ago (minimum release age %s)",
-		humanDuration(age), humanDuration(in.Config.MinReleaseAge))}}
+		humanDuration(age), humanDuration(in.Config.MinReleaseAge)),
+		Evidence: "published " + published.UTC().Format("2006-01-02")}}
 }
 
 // publisherWindow limits SI-REC-002 to recent releases: a takeover of an
@@ -70,7 +71,8 @@ func (r publisherRule) Check(in *Input) []Finding {
 	var out []Finding
 	if prevMeta.HasProvenance() && !in.Meta.HasProvenance() {
 		out = append(out, Finding{Rule: r.ID(), Severity: High,
-			Message: fmt.Sprintf("published without provenance, but %s had it (possible stolen token)", prev)})
+			Message:  fmt.Sprintf("published without provenance, but %s had it (possible stolen token)", prev),
+			Evidence: "provenance dropped since " + prev})
 	}
 	// Trusted publishing (CI via OIDC) is never a "new publisher".
 	if pub := in.Meta.NpmUser.Name; pub != "" && in.Meta.NpmUser.TrustedPublisher == nil {
@@ -83,7 +85,8 @@ func (r publisherRule) Check(in *Input) []Finding {
 		}
 		if !seen {
 			out = append(out, Finding{Rule: r.ID(), Severity: High,
-				Message: fmt.Sprintf("published by %q, who never published an earlier version", pub)})
+				Message:  fmt.Sprintf("published by %q, who never published an earlier version", pub),
+				Evidence: "publisher " + pub})
 		}
 	}
 
@@ -98,8 +101,10 @@ func (r publisherRule) Check(in *Input) []Finding {
 		}
 	}
 	if len(added) > 0 {
+		sorted := slices.Sorted(slices.Values(added))
 		out = append(out, Finding{Rule: r.ID(), Severity: Low,
-			Message: fmt.Sprintf("maintainers added since %s: %s", prev, strings.Join(added, ", "))})
+			Message:  fmt.Sprintf("maintainers added since %s: %s", prev, strings.Join(added, ", ")),
+			Evidence: "maintainers added: " + strings.Join(sorted, ",")})
 	}
 	return out
 }
@@ -111,24 +116,24 @@ func (deprecatedRule) ID() string { return "SI-DEP-001" }
 
 func (r deprecatedRule) Check(in *Input) []Finding {
 	if in.Meta == nil {
-		return []Finding{{Rule: r.ID(), Severity: Low, Message: "version not found in the registry (unpublished?)"}}
+		return []Finding{{Rule: r.ID(), Severity: Low, Message: "version not found in the registry (unpublished?)", Evidence: "not in the registry"}}
 	}
 	if in.Meta.Abandoned {
 		msg := "abandoned"
 		if repl := strings.TrimSpace(string(in.Meta.Deprecated)); repl != "" {
 			msg += "; use " + repl + " instead"
 		}
-		return []Finding{{Rule: r.ID(), Severity: Low, Message: msg}}
+		return []Finding{{Rule: r.ID(), Severity: Low, Message: msg, Evidence: "abandoned"}}
 	}
 	if in.Meta.Yanked {
 		msg := "yanked"
 		if reason := strings.TrimSpace(string(in.Meta.Deprecated)); reason != "" {
 			msg += ": " + reason
 		}
-		return []Finding{{Rule: r.ID(), Severity: Low, Message: msg}}
+		return []Finding{{Rule: r.ID(), Severity: Low, Message: msg, Evidence: "yanked"}}
 	}
 	if msg := string(in.Meta.Deprecated); msg != "" {
-		return []Finding{{Rule: r.ID(), Severity: Low, Message: "deprecated: " + msg}}
+		return []Finding{{Rule: r.ID(), Severity: Low, Message: "deprecated: " + msg, Evidence: "deprecated: " + clipEvidence(msg)}}
 	}
 	return nil
 }
@@ -249,7 +254,8 @@ func (r sourceRule) Check(in *Input) []Finding {
 		}
 		if !slices.ContainsFunc(in.Config.RegistryHosts, func(h string) bool { return sameRegistry(got.Hostname(), h) }) {
 			return []Finding{{Rule: r.ID(), Severity: High, Message: fmt.Sprintf("downloaded from %s, not a configured registry (%s)",
-				got.Hostname(), strings.Join(in.Config.RegistryHosts, ", "))}}
+				got.Hostname(), strings.Join(in.Config.RegistryHosts, ", ")),
+				Evidence: "host " + strings.ToLower(got.Hostname())}}
 		}
 	}
 	return nil
@@ -287,7 +293,8 @@ func (r typosquatRule) Check(in *Input) []Finding {
 		return nil
 	}
 	if target, ok := in.Config.Popular.Typosquat(in.Package.Name); ok {
-		return []Finding{{Rule: r.ID(), Severity: High, Message: fmt.Sprintf("name looks like the popular package %q", target)}}
+		return []Finding{{Rule: r.ID(), Severity: High, Message: fmt.Sprintf("name looks like the popular package %q", target),
+			Evidence: "imitates " + target}}
 	}
 	return nil
 }
@@ -304,7 +311,8 @@ func (r popularityRule) Check(in *Input) []Finding {
 	if in.Meta == nil || in.Downloads < 0 || in.Downloads >= unpopular || !hasInstallScript(in.Meta) {
 		return nil
 	}
-	return []Finding{{Rule: r.ID(), Severity: Medium, Message: fmt.Sprintf("only %d downloads last week, and it runs install scripts", in.Downloads)}}
+	return []Finding{{Rule: r.ID(), Severity: Medium, Message: fmt.Sprintf("only %d downloads last week, and it runs install scripts", in.Downloads),
+		Evidence: "install scripts, unpopular"}}
 }
 
 // SI-VUL-001: known advisories. Malicious-package entries block; ordinary
@@ -318,7 +326,7 @@ func (r vulnRule) Check(in *Input) []Finding {
 	var out []Finding
 	for _, v := range in.Vulns {
 		if v.Malicious() {
-			out = append(out, Finding{Rule: r.ID(), Severity: Block, Message: fmt.Sprintf("known malicious package (%s)", v.ID)})
+			out = append(out, Finding{Rule: r.ID(), Severity: Block, Message: fmt.Sprintf("known malicious package (%s)", v.ID), Evidence: v.ID})
 			continue
 		}
 		sev := Low
@@ -335,7 +343,7 @@ func (r vulnRule) Check(in *Input) []Finding {
 		if v.Severity != "" {
 			msg += " (" + strings.ToLower(v.Severity) + ")"
 		}
-		out = append(out, Finding{Rule: r.ID(), Severity: sev, Message: msg})
+		out = append(out, Finding{Rule: r.ID(), Severity: sev, Message: msg, Evidence: v.ID})
 	}
 	return out
 }
@@ -376,7 +384,7 @@ func (r buildRule) Check(in *Input) []Finding {
 			return nil
 		}
 	}
-	return []Finding{{Rule: r.ID(), Severity: Medium, Message: "no wheel: installing it builds the source distribution, which runs its build code"}}
+	return []Finding{{Rule: r.ID(), Severity: Medium, Message: "no wheel: installing it builds the source distribution, which runs its build code", Evidence: "no wheel"}}
 }
 
 // SI-PLG-001 (Packagist): a Composer plugin. Its code runs inside Composer,
@@ -391,7 +399,16 @@ func (pluginRule) Ecosystems() []ecosystem.Ecosystem {
 
 func (r pluginRule) Check(in *Input) []Finding {
 	if in.Package.Plugin || (in.Meta != nil && in.Meta.Plugin) {
-		return []Finding{{Rule: r.ID(), Severity: Medium, Message: "Composer plugin: its code runs inside Composer, on every Composer command"}}
+		return []Finding{{Rule: r.ID(), Severity: Medium, Message: "Composer plugin: its code runs inside Composer, on every Composer command", Evidence: "composer plugin"}}
 	}
 	return nil
+}
+
+// clipEvidence keeps free text short enough to be an evidence string.
+func clipEvidence(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 80 {
+		return string(r[:80])
+	}
+	return s
 }

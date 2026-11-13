@@ -160,17 +160,7 @@ func (c pyCollector) add(rel string, data []byte, buildFile bool) bool {
 			hits = append(hits, scanBuild(src)...)
 		}
 	}
-	for _, h := range hits {
-		a := c.byRule[h.rule]
-		if a == nil {
-			a = &agg{sev: h.sev, files: map[string]string{}}
-			c.byRule[h.rule] = a
-		}
-		if h.sev > a.sev {
-			a.sev = h.sev
-		}
-		a.files[rel] = h.what
-	}
+	c.record(rel, data, hits)
 	return true
 }
 
@@ -188,7 +178,7 @@ func isBuildFile(rel string) bool {
 // an sdist (.tar.gz or .zip). pkg is the normalized project name; name is
 // the file name, which says how to read it. Nothing is extracted to disk.
 func PythonArchive(pkg, name string, data []byte) ([]analyze.Finding, error) {
-	c := pyCollector{&collector{byRule: map[string]*agg{}}, pkg}
+	c := pyCollector{&collector{}, pkg}
 	sdist := !strings.HasSuffix(name, ".whl")
 	visit := func(entry string, size int64, open func() (io.Reader, error)) error {
 		rel, ok := safeRel(entry)
@@ -321,7 +311,7 @@ func walkTarGz(data []byte, visit visitFunc) error {
 func Pth(owner, file, src string) []analyze.Finding {
 	var out []analyze.Finding
 	for _, h := range scanPth(owner, file, src) {
-		out = append(out, analyze.Finding{Rule: h.rule, Severity: h.sev, Message: fmt.Sprintf("%s installs %s, which %s", owner, path.Base(file), h.what)})
+		out = append(out, analyze.Finding{Rule: h.rule, Severity: h.sev, Message: fmt.Sprintf("%s installs %s, which %s", owner, path.Base(file), h.what), File: file})
 	}
 	return out
 }
@@ -335,7 +325,7 @@ func PythonInstalled(site, pkg string, files []string) []analyze.Finding {
 		return nil
 	}
 	defer func() { _ = root.Close() }()
-	c := pyCollector{&collector{byRule: map[string]*agg{}}, pkg}
+	c := pyCollector{&collector{}, pkg}
 	for _, f := range files {
 		rel, ok := safeRel(f)
 		if !ok || (!strings.HasSuffix(rel, ".py") && !strings.HasSuffix(rel, ".pth")) {

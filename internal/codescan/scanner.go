@@ -34,6 +34,8 @@ type cached struct {
 	Rule     string `json:"rule"`
 	Severity int    `json:"severity"`
 	Message  string `json:"message"`
+	File     string `json:"file,omitempty"`
+	FileHash string `json:"fileHash,omitempty"`
 }
 
 // ScanAll scans every target and returns findings by ID (absent when clean).
@@ -92,7 +94,7 @@ func (s *Scanner) Lookup(t Target) ([]analyze.Finding, bool) {
 	}
 	out := make([]analyze.Finding, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, analyze.Finding{Rule: c.Rule, Severity: analyze.Severity(c.Severity), Message: c.Message})
+		out = append(out, analyze.Finding{Rule: c.Rule, Severity: analyze.Severity(c.Severity), Message: c.Message, File: c.File, FileHash: c.FileHash})
 	}
 	return out, true
 }
@@ -105,7 +107,7 @@ func (s *Scanner) Store(t Target, fs []analyze.Finding) {
 	}
 	cs := make([]cached, 0, len(fs))
 	for _, f := range fs {
-		cs = append(cs, cached{f.Rule, int(f.Severity), f.Message})
+		cs = append(cs, cached{f.Rule, int(f.Severity), f.Message, f.File, f.FileHash})
 	}
 	if data, err := json.Marshal(cs); err == nil && os.MkdirAll(filepath.Dir(path), 0o750) == nil {
 		_ = os.WriteFile(path, data, 0o600)

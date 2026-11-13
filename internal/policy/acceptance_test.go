@@ -1,32 +1,26 @@
 package policy
 
 import (
-	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestAcceptanceExpired(t *testing.T) {
 	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name    string
-		expires string
-		want    bool
+	for _, tt := range []struct {
+		name, expires string
+		want          bool
 	}{
 		{"no expiry", "", false},
 		{"future date", "2027-05-12", false},
 		{"today", "2026-11-12", false},
 		{"yesterday", "2026-11-11", true},
-		{"far past", "2026-01-01", true},
 		{"invalid format", "not-a-date", true},
-	}
-
-	for _, tt := range tests {
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			a := Acceptance{Expires: tt.expires}
-			if got := a.Expired(now); got != tt.want {
+			if got := (Acceptance{Expires: tt.expires}).Expired(now); got != tt.want {
 				t.Errorf("Expired() = %v, want %v", got, tt.want)
 			}
 		})
@@ -34,405 +28,219 @@ func TestAcceptanceExpired(t *testing.T) {
 }
 
 func TestAcceptanceValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		acc     Acceptance
-		wantErr bool
-		errMsg  string
+	for _, tt := range []struct {
+		name string
+		acc  Acceptance
+		err  string
 	}{
-		{
-			"valid with all fields",
-			Acceptance{Rule: "SI-CODE-001", File: "dist/index.js", Hash: "sha256:abc", Reason: "safe"},
-			false,
-			"",
-		},
-		{
-			"valid with expiry",
-			Acceptance{Rule: "SI-CODE-001", File: "dist/index.js", Hash: "sha256:abc", Reason: "safe", Expires: "2027-05-12"},
-			false,
-			"",
-		},
-		{
-			"missing rule",
-			Acceptance{File: "dist/index.js", Hash: "sha256:abc", Reason: "safe"},
-			true,
-			"rule required",
-		},
-		{
-			"missing reason",
-			Acceptance{Rule: "SI-CODE-001", File: "dist/index.js", Hash: "sha256:abc"},
-			true,
-			"reason required",
-		},
-		{
-			"invalid expiry format",
-			Acceptance{Rule: "SI-CODE-001", File: "dist/index.js", Hash: "sha256:abc", Reason: "safe", Expires: "not-a-date"},
-			true,
-			"invalid expires format",
-		},
-	}
-
-	for _, tt := range tests {
+		{"valid", Acceptance{Rule: "SI-CODE-001", Reason: "safe"}, ""},
+		{"missing rule", Acceptance{Reason: "safe"}, "rule required"},
+		{"missing reason", Acceptance{Rule: "SI-CODE-001"}, "reason required"},
+		{"bad expiry", Acceptance{Rule: "R", Reason: "x", Expires: "soon"}, "invalid expires"},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.acc.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if err != nil && !contains(err.Error(), tt.errMsg) {
-				t.Errorf("Validate() error = %q, want message containing %q", err.Error(), tt.errMsg)
+			if (err != nil) != (tt.err != "") || (err != nil && !strings.Contains(err.Error(), tt.err)) {
+				t.Errorf("Validate() = %v, want %q", err, tt.err)
 			}
 		})
 	}
 }
 
-func TestLookupAcceptance(t *testing.T) {
-	p := &Policy{
-		File: File{
-			AcceptFindings: map[string][]Acceptance{
-				"vite": {
-					{
-						Version: "8.3.8",
-						Rule:    "SI-CODE-001",
-						File:    "dist/node/chunks/node.js",
-						Hash:    "sha256:abc123",
-						Reason:  "registry read only",
-					},
-				},
-				"sharp": {
-					{
-						Version: "0.33.0",
-						Rule:    "SI-CODE-002",
-						File:    "dist/index.js",
-						Hash:    "sha256:def456",
-						Reason:  "safe pattern",
-					},
-				},
-			},
-		},
-	}
-
-	tests := []struct {
-		name    string
-		pkg     string
-		ver     string
-		rule    string
-		file    string
-		hash    string
-		wantOk  bool
-		wantReason string
-	}{
-		{
-			"exact match",
-			"vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123",
-			true, "registry read only",
-		},
-		{
-			"different package",
-			"esbuild", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123",
-			false, "",
-		},
-		{
-			"different version",
-			"vite", "8.3.7", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123",
-			false, "",
-		},
-		{
-			"different rule",
-			"vite", "8.3.8", "SI-CODE-002", "dist/node/chunks/node.js", "sha256:abc123",
-			false, "",
-		},
-		{
-			"different file",
-			"vite", "8.3.8", "SI-CODE-001", "dist/other.js", "sha256:abc123",
-			false, "",
-		},
-		{
-			"different hash",
-			"vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:xyz999",
-			false, "",
-		},
-		{
-			"sharp package match",
-			"sharp", "0.33.0", "SI-CODE-002", "dist/index.js", "sha256:def456",
-			true, "safe pattern",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			acc, ok := p.LookupAcceptance(tt.pkg, tt.ver, tt.rule, tt.file, tt.hash)
-			if ok != tt.wantOk {
-				t.Errorf("LookupAcceptance() ok = %v, want %v", ok, tt.wantOk)
-				return
-			}
-			if ok && acc.Reason != tt.wantReason {
-				t.Errorf("LookupAcceptance() reason = %q, want %q", acc.Reason, tt.wantReason)
-			}
-		})
-	}
-}
-
-func TestAcceptFinding(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".safe-install.json")
-
-	// Step 1: Accept a new finding
-	err := AcceptFinding(path, "vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123", "registry read only", "2027-05-12")
+func TestAcceptFindingDurationExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	err := AcceptFinding(path, "vite", Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Hash: "sha256:a", Reason: "ok", Expires: "90d"})
 	if err != nil {
-		t.Fatalf("AcceptFinding() error = %v", err)
+		t.Fatal(err)
 	}
-
-	// Step 2: Verify it was written
 	f, err := Read(path)
 	if err != nil {
-		t.Fatalf("Read() error = %v", err)
+		t.Fatal(err)
 	}
-
-	if len(f.AcceptFindings["vite"]) != 1 {
-		t.Errorf("AcceptFindings[vite] length = %d, want 1", len(f.AcceptFindings["vite"]))
-		return
-	}
-
 	acc := f.AcceptFindings["vite"][0]
-	if acc.Reason != "registry read only" {
-		t.Errorf("Reason = %q, want %q", acc.Reason, "registry read only")
+	want := time.Now().UTC().Add(90 * 24 * time.Hour).Format("2006-01-02")
+	if acc.Expires != want {
+		t.Errorf("Expires = %q, want the date %q", acc.Expires, want)
 	}
-	if acc.Rule != "SI-CODE-001" {
-		t.Errorf("Rule = %q, want %q", acc.Rule, "SI-CODE-001")
+	if acc.Expired(time.Now()) {
+		t.Error("a 90d acceptance counts as expired")
 	}
-	if acc.Hash != "sha256:abc123" {
-		t.Errorf("Hash = %q, want %q", acc.Hash, "sha256:abc123")
+	if acc.At != time.Now().UTC().Format("2006-01-02") {
+		t.Errorf("At = %q", acc.At)
 	}
-	if acc.Expires != "2027-05-12" {
-		t.Errorf("Expires = %q, want %q", acc.Expires, "2027-05-12")
+	for _, bad := range []Acceptance{
+		{Version: "1", Rule: "R", Reason: ""},
+		{Version: "1", Rule: "", Reason: "x"},
+		{Version: "1", Rule: "R", Reason: "x", Expires: "nope"},
+	} {
+		if AcceptFinding(path, "vite", bad) == nil {
+			t.Errorf("AcceptFinding(%+v) = nil, want an error", bad)
+		}
 	}
-	if acc.Version != "8.3.8" {
-		t.Errorf("Version = %q, want %q", acc.Version, "8.3.8")
-	}
-	if acc.At == "" {
-		t.Errorf("At is empty, want current date")
-	}
-
-	// Step 3: Add another for same package, different rule
-	err = AcceptFinding(path, "vite", "8.3.8", "SI-CODE-002", "dist/other.js", "sha256:def456", "another reason", "")
-	if err != nil {
-		t.Fatalf("Second AcceptFinding() error = %v", err)
-	}
-
-	f, err = Read(path)
-	if err != nil {
-		t.Fatalf("Read() error = %v", err)
-	}
-
-	if len(f.AcceptFindings["vite"]) != 2 {
-		t.Errorf("AcceptFindings[vite] length after second = %d, want 2", len(f.AcceptFindings["vite"]))
-	}
-
-	// Step 4: Invalid expiry should error
-	err = AcceptFinding(path, "esbuild", "0.25.10", "SI-CODE-001", "dist/index.js", "sha256:xyz", "test", "not-a-date")
-	if err == nil {
-		t.Errorf("AcceptFinding() with invalid expiry should error")
+	if err := AcceptFinding(path, "x", Acceptance{Version: "1", Rule: "R", Reason: "x", Expires: "12h"}); err != nil {
+		t.Errorf("12h: %v", err)
 	}
 }
 
-func TestRevokeFinding(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".safe-install.json")
-
-	// Setup: write two acceptances
-	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123", "reason1", "")
-	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-002", "dist/other.js", "sha256:def456", "reason2", "")
-
-	// Test revoke first one
-	ok, err := RevokeFinding(path, "vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js")
-	if err != nil {
-		t.Fatalf("RevokeFinding() error = %v", err)
+func TestAcceptFindingReplacesSameKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	base := Acceptance{Version: "1.0.0", Rule: "SI-CODE-001", File: "a.js", Hash: "sha256:old", Reason: "r1"}
+	other := Acceptance{Version: "1.0.0", Rule: "SI-CODE-001", File: "b.js", Hash: "sha256:b", Reason: "r"}
+	must(t, AcceptFinding(path, "p", base))
+	must(t, AcceptFinding(path, "p", other))
+	base.Hash, base.Reason = "sha256:new", "r2"
+	must(t, AcceptFinding(path, "p", base))
+	f, _ := Read(path)
+	if len(f.AcceptFindings["p"]) != 2 {
+		t.Fatalf("entries = %+v, want 2", f.AcceptFindings["p"])
 	}
-	if !ok {
-		t.Errorf("RevokeFinding() ok = %v, want true", ok)
+	if got := f.AcceptFindings["p"][0]; got.Hash != "sha256:new" || got.Reason != "r2" {
+		t.Errorf("not replaced: %+v", got)
 	}
-
-	f, err := Read(path)
-	if err != nil {
-		t.Fatalf("Read() error = %v", err)
-	}
-
-	if len(f.AcceptFindings["vite"]) != 1 {
-		t.Errorf("AcceptFindings[vite] after revoke = %d, want 1", len(f.AcceptFindings["vite"]))
-	}
-	if f.AcceptFindings["vite"][0].Rule != "SI-CODE-002" {
-		t.Errorf("Remaining rule = %q, want %q", f.AcceptFindings["vite"][0].Rule, "SI-CODE-002")
-	}
-
-	// Test revoke non-existent
-	ok, err = RevokeFinding(path, "esbuild", "0.25.10", "SI-CODE-001", "dist/index.js")
-	if err != nil {
-		t.Fatalf("RevokeFinding() non-existent error = %v", err)
-	}
-	if ok {
-		t.Errorf("RevokeFinding() non-existent ok = %v, want false", ok)
-	}
-
-	// Test revoke last one
-	ok, err = RevokeFinding(path, "vite", "8.3.8", "SI-CODE-002", "dist/other.js")
-	if err != nil {
-		t.Fatalf("RevokeFinding() last error = %v", err)
-	}
-	if !ok {
-		t.Errorf("RevokeFinding() last ok = %v, want true", ok)
-	}
-
-	f, err = Read(path)
-	if err != nil {
-		t.Fatalf("Read() error = %v", err)
-	}
-	if len(f.AcceptFindings["vite"]) != 0 {
-		t.Errorf("AcceptFindings[vite] after revoking all = %d, want 0", len(f.AcceptFindings["vite"]))
+	// Package-level: one entry per evidence.
+	must(t, AcceptFinding(path, "t", Acceptance{Version: "1", Rule: "SI-REC-002", Integrity: "sha512-a", Evidence: "publisher x", Reason: "r"}))
+	must(t, AcceptFinding(path, "t", Acceptance{Version: "1", Rule: "SI-REC-002", Integrity: "sha512-a", Evidence: "maintainers added: y", Reason: "r"}))
+	must(t, AcceptFinding(path, "t", Acceptance{Version: "1", Rule: "SI-REC-002", Integrity: "sha512-b", Evidence: "publisher x", Reason: "r2"}))
+	f, _ = Read(path)
+	if len(f.AcceptFindings["t"]) != 2 || f.AcceptFindings["t"][0].Integrity != "sha512-b" {
+		t.Errorf("package-level entries = %+v", f.AcceptFindings["t"])
 	}
 }
 
-func TestFileBackwardsCompatibility(t *testing.T) {
-	// Test that old .safe-install.json without acceptFindings field parses OK
-	data := []byte(`{
-  "minReleaseAge": "3d",
-  "failOn": "high",
-  "allowScripts": {
-    "esbuild": { "version": "0.25.10", "hash": "sha256-..." }
-  }
-}`)
+func TestRevokeFindingMatchesVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	must(t, AcceptFinding(path, "vite", Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Reason: "r"}))
+	must(t, AcceptFinding(path, "vite", Acceptance{Version: "8.3.9", Rule: "SI-CODE-001", File: "a.js", Reason: "r"}))
+	ok, err := RevokeFinding(path, "vite", "8.3.7", "SI-CODE-001", "a.js")
+	if err != nil || ok {
+		t.Fatalf("revoking an unknown version = %v, %v", ok, err)
+	}
+	ok, err = RevokeFinding(path, "vite", "8.3.8", "SI-CODE-001", "a.js")
+	if err != nil || !ok {
+		t.Fatalf("revoke = %v, %v", ok, err)
+	}
+	f, _ := Read(path)
+	if len(f.AcceptFindings["vite"]) != 1 || f.AcceptFindings["vite"][0].Version != "8.3.9" {
+		t.Errorf("remaining = %+v", f.AcceptFindings["vite"])
+	}
+	ok, _ = RevokeFinding(path, "vite", "8.3.9", "SI-CODE-001", "a.js")
+	f, _ = Read(path)
+	if !ok || len(f.AcceptFindings) != 0 {
+		t.Errorf("last revoke: ok %v, %+v", ok, f.AcceptFindings)
+	}
+}
 
-	var f File
-	err := json.Unmarshal(data, &f)
+func TestFindAcceptance(t *testing.T) {
+	p := &Policy{File: File{AcceptFindings: map[string][]Acceptance{
+		"vite": {
+			{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Hash: "sha256:a", Reason: "code"},
+			{Version: "8.3.8", Rule: "SI-REC-002", Integrity: "sha512-x", Evidence: "publisher x", Reason: "pkg"},
+		},
+	}}}
+	for _, tt := range []struct {
+		ver, rule, file string
+		want            string
+	}{
+		{"8.3.8", "SI-CODE-001", "a.js", "code"},
+		{"8.3.8", "SI-REC-002", "", "pkg"},
+		{"8.3.7", "SI-CODE-001", "a.js", ""},
+		{"8.3.8", "SI-CODE-001", "b.js", ""},
+		{"8.3.8", "SI-CODE-002", "a.js", ""},
+	} {
+		acc, ok := p.FindAcceptance("vite", tt.ver, tt.rule, tt.file)
+		if ok != (tt.want != "") || acc.Reason != tt.want {
+			t.Errorf("FindAcceptance(%v) = %+v, %v", tt, acc, ok)
+		}
+	}
+	if _, ok := p.FindAcceptance("other", "8.3.8", "SI-CODE-001", "a.js"); ok {
+		t.Error("another package matched")
+	}
+}
+
+func TestDisallowAcceptCannotBeWeakened(t *testing.T) {
+	isolate(t)
+	org := filepath.Join(t.TempDir(), "org.json")
+	write(t, org, `{"disallowAccept": ["SI-REC-*", "SI-CODE-002"]}`)
+	proj := t.TempDir()
+	write(t, filepath.Join(proj, FileName), `{"orgPolicy": "`+filepath.ToSlash(org)+`", "disallowAccept": [], "acceptFindings": {"p": [{"version":"1","rule":"SI-REC-002","reason":"x"}]}}`)
+	p, err := Load(proj)
 	if err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
+		t.Fatal(err)
 	}
+	for rule, want := range map[string]bool{"SI-REC-002": true, "SI-REC-001": true, "SI-CODE-002": true, "SI-CODE-001": false} {
+		if got := p.AcceptForbidden(rule); got != want {
+			t.Errorf("AcceptForbidden(%s) = %v, want %v", rule, got, want)
+		}
+	}
+	all := &Policy{File: File{DisallowAccept: []string{"*"}}}
+	if !all.AcceptForbidden("SI-CODE-001") {
+		t.Error(`"*" does not forbid everything`)
+	}
+	if (&Policy{}).AcceptForbidden("SI-CODE-001") {
+		t.Error("nothing is forbidden by default")
+	}
+}
 
-	if f.AcceptFindings == nil {
-		f.AcceptFindings = map[string][]Acceptance{} // should be OK to initialize
+func TestOrgAcceptancesInherited(t *testing.T) {
+	isolate(t)
+	org := filepath.Join(t.TempDir(), "org.json")
+	write(t, org, `{"acceptFindings": {"tslib": [{"version":"2.9.1","rule":"SI-REC-002","integrity":"sha512-a","evidence":"publisher x","reason":"org reviewed"}]}}`)
+	proj := t.TempDir()
+	write(t, filepath.Join(proj, FileName), `{"orgPolicy": "`+filepath.ToSlash(org)+`"}`)
+	p, err := Load(proj)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if acc, ok := p.FindAcceptance("tslib", "2.9.1", "SI-REC-002", ""); !ok || acc.Reason != "org reviewed" {
+		t.Errorf("org acceptance not inherited: %+v %v", acc, ok)
+	}
+}
 
-	if f.MinReleaseAge != "3d" {
-		t.Errorf("MinReleaseAge = %q, want %q", f.MinReleaseAge, "3d")
+func TestPruneStale(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	must(t, AcceptFinding(path, "vite", Acceptance{Version: "8.3.7", Rule: "SI-CODE-001", File: "a.js", Reason: "r"}))
+	must(t, AcceptFinding(path, "vite", Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Reason: "r"}))
+	must(t, AcceptFinding(path, "gone", Acceptance{Version: "1.0.0", Rule: "SI-CODE-001", File: "a.js", Reason: "r"}))
+	n, err := PruneStale(path, func(pkg, ver string) bool { return pkg == "vite" && ver == "8.3.8" })
+	if err != nil || n != 2 {
+		t.Fatalf("PruneStale = %d, %v", n, err)
 	}
-	if f.FailOn != "high" {
-		t.Errorf("FailOn = %q, want %q", f.FailOn, "high")
+	f, _ := Read(path)
+	if len(f.AcceptFindings) != 1 || len(f.AcceptFindings["vite"]) != 1 || f.AcceptFindings["vite"][0].Version != "8.3.8" {
+		t.Errorf("remaining = %+v", f.AcceptFindings)
+	}
+	if n, _ := PruneStale(path, func(string, string) bool { return true }); n != 0 {
+		t.Errorf("nothing stale, pruned %d", n)
+	}
+}
+
+func TestPruneAcceptancesExpired(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	must(t, AcceptFinding(path, "a", Acceptance{Version: "1", Rule: "R", File: "x", Reason: "r", Expires: "2026-01-01"}))
+	must(t, AcceptFinding(path, "b", Acceptance{Version: "1", Rule: "R", File: "x", Reason: "r", Expires: "2999-01-01"}))
+	must(t, AcceptFinding(path, "c", Acceptance{Version: "1", Rule: "R", File: "x", Reason: "r"}))
+	n, err := PruneAcceptances(path)
+	if err != nil || n != 1 {
+		t.Fatalf("PruneAcceptances = %d, %v", n, err)
+	}
+	f, _ := Read(path)
+	if len(f.AcceptFindings) != 2 || f.AcceptFindings["a"] != nil {
+		t.Errorf("remaining = %+v", f.AcceptFindings)
 	}
 }
 
 func TestAcceptFindingsOverlay(t *testing.T) {
-	// Test that org policy acceptFindings are overlaid correctly
-	orgPolicy := &File{
-		AcceptFindings: map[string][]Acceptance{
-			"vite": {
-				{Rule: "SI-CODE-001", File: "dist/index.js", Hash: "sha256:org", Reason: "org acceptance"},
-			},
-		},
-	}
-
-	projectFile := &File{
-		AcceptFindings: map[string][]Acceptance{
-			"vite": {
-				{Rule: "SI-CODE-002", File: "dist/other.js", Hash: "sha256:proj", Reason: "project acceptance"},
-			},
-		},
-	}
-
 	p := &Policy{File: File{AcceptFindings: map[string][]Acceptance{}}}
-	p.overlay(orgPolicy)
-	p.overlay(projectFile)
-
+	p.overlay(&File{AcceptFindings: map[string][]Acceptance{"vite": {{Rule: "SI-CODE-001", Reason: "org"}}}})
+	p.overlay(&File{AcceptFindings: map[string][]Acceptance{"vite": {{Rule: "SI-CODE-002", Reason: "project"}}}})
 	if len(p.AcceptFindings["vite"]) != 2 {
-		t.Errorf("AcceptFindings[vite] after overlay = %d, want 2", len(p.AcceptFindings["vite"]))
-	}
-
-	// Both should be present
-	hasOrg := false
-	hasProj := false
-	for _, acc := range p.AcceptFindings["vite"] {
-		if acc.Rule == "SI-CODE-001" {
-			hasOrg = true
-		}
-		if acc.Rule == "SI-CODE-002" {
-			hasProj = true
-		}
-	}
-	if !hasOrg {
-		t.Errorf("Org policy acceptance not found in overlay")
-	}
-	if !hasProj {
-		t.Errorf("Project acceptance not found in overlay")
+		t.Errorf("after overlay: %+v", p.AcceptFindings["vite"])
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || findIn(s, substr)))
-}
-
-func findIn(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-func TestPruneAcceptances(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".safe-install.json")
-
-	// Setup: write acceptances with various expiry dates
-	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-001", "dist/node/chunks/node.js", "sha256:abc123", "expired", "2026-01-01")
-	AcceptFinding(path, "vite", "8.3.8", "SI-CODE-002", "dist/other.js", "sha256:def456", "expired2", "2026-06-01")
-	AcceptFinding(path, "sharp", "0.33.0", "SI-CODE-003", "dist/index.js", "sha256:xyz789", "future", "2027-12-31")
-	AcceptFinding(path, "esbuild", "0.25.10", "SI-CODE-004", "dist/build.js", "sha256:aaa111", "no expiry", "")
-
-	// Verify all 4 are present before pruning
-	f, err := Read(path)
+func must(t *testing.T, err error) {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("Read() error = %v", err)
-	}
-	totalBefore := 0
-	for _, accs := range f.AcceptFindings {
-		totalBefore += len(accs)
-	}
-	if totalBefore != 4 {
-		t.Errorf("Before prune: found %d acceptances, want 4", totalBefore)
-	}
-
-	// Prune expired acceptances
-	pruned, err := PruneAcceptances(path)
-	if err != nil {
-		t.Fatalf("PruneAcceptances() error = %v", err)
-	}
-
-	// Should have pruned 2 (the ones with expired dates)
-	if pruned != 2 {
-		t.Errorf("PruneAcceptances() pruned = %d, want 2", pruned)
-	}
-
-	// Verify only 2 remain
-	f, err = Read(path)
-	if err != nil {
-		t.Fatalf("Read() after prune error = %v", err)
-	}
-	totalAfter := 0
-	for _, accs := range f.AcceptFindings {
-		totalAfter += len(accs)
-	}
-	if totalAfter != 2 {
-		t.Errorf("After prune: found %d acceptances, want 2", totalAfter)
-	}
-
-	// Verify the right ones remain
-	if len(f.AcceptFindings["sharp"]) != 1 {
-		t.Errorf("sharp acceptances after prune = %d, want 1", len(f.AcceptFindings["sharp"]))
-	}
-	if len(f.AcceptFindings["esbuild"]) != 1 {
-		t.Errorf("esbuild acceptances after prune = %d, want 1", len(f.AcceptFindings["esbuild"]))
-	}
-	if _, ok := f.AcceptFindings["vite"]; ok {
-		t.Errorf("vite should be removed after pruning all its acceptances")
+		t.Fatal(err)
 	}
 }

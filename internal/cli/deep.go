@@ -178,20 +178,26 @@ func deepPython(ctx context.Context, client *registry.Client, scanner *codescan.
 	return mergeFindings(out), nil
 }
 
-// mergeFindings keeps one finding per rule (the most severe), as the
+// mergeFindings keeps one finding per rule and file (the most severe), as the
 // scanner does within one archive.
 func mergeFindings(fs []analyze.Finding) []analyze.Finding {
 	best := map[string]analyze.Finding{}
 	for _, f := range fs {
-		if cur, ok := best[f.Rule]; !ok || f.Severity > cur.Severity {
-			best[f.Rule] = f
+		key := f.Rule + "\x00" + f.File
+		if cur, ok := best[key]; !ok || f.Severity > cur.Severity {
+			best[key] = f
 		}
 	}
 	out := make([]analyze.Finding, 0, len(best))
 	for _, f := range best {
 		out = append(out, f)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Rule != out[j].Rule {
+			return out[i].Rule < out[j].Rule
+		}
+		return out[i].File < out[j].File
+	})
 	return out
 }
 

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"unicode"
@@ -28,18 +29,13 @@ func Markdown(w io.Writer, r *analyze.Report, source string) error {
 		ew.printf("Checked %d package(s) in %s.\n\n", len(r.Results), code(source))
 	}
 
-	counts := map[analyze.Level]int{}
+	counts, accepted := Counts(r)
 	var risky []analyze.Result
 	for lvl := analyze.LevelBlock; lvl > analyze.LevelNone; lvl-- {
 		for _, res := range r.Results {
 			if res.Err == nil && res.Level == lvl {
 				risky = append(risky, res)
 			}
-		}
-	}
-	for _, res := range r.Results {
-		if res.Err == nil {
-			counts[res.Level]++
 		}
 	}
 
@@ -54,21 +50,56 @@ func Markdown(w io.Writer, r *analyze.Report, source string) error {
 			}
 			var fs []string
 			for _, f := range res.Findings {
-				fs = append(fs, code(f.Rule)+" "+code(clip(f.Message, 160)))
+				if f.Accepted == nil {
+					fs = append(fs, code(f.Rule)+" "+code(clip(f.Message, 160)))
+				}
 			}
 			ew.printf("| %s | %s%s | %d | %s |\n", strings.ToUpper(res.Level.String()), code(res.Package.ID), tags(res), res.Score, strings.Join(fs, "<br>"))
 		}
 	}
+	acceptedSection(ew, r)
 	for _, warn := range r.Warnings {
 		ew.printf("\n> warning: %s\n", code(warn))
 	}
 	if failed := r.Failed(); failed > 0 {
 		ew.printf("\nCould not check %d package(s).\n", failed)
 	}
-	ew.printf("\n%d block, %d high, %d medium, %d low, %d clean\n",
-		counts[analyze.LevelBlock], counts[analyze.LevelHigh], counts[analyze.LevelMedium],
-		counts[analyze.LevelLow], counts[analyze.LevelNone])
+	ew.printf("\n%s\n", Summary(counts, accepted))
 	return ew.err
+}
+
+// maxMarkdownAccepted bounds the accepted-findings list.
+const maxMarkdownAccepted = 50
+
+// acceptedSection lists the accepted findings in a collapsed section: they
+// do not fail the check, but a reviewer can see what was waved through.
+// Reasons come from the policy file, so they go in code spans too.
+func acceptedSection(ew *errWriter, r *analyze.Report) {
+	var lines []string
+	for _, res := range r.Results {
+		for _, f := range res.Findings {
+			if f.Accepted == nil {
+				continue
+			}
+			where := ""
+			if f.File != "" {
+				where = " " + code(f.File)
+			}
+			lines = append(lines, fmt.Sprintf("- %s %s%s: %s", code(res.Package.ID), code(f.Rule), where, code(clip(AcceptedNote(f.Accepted), 200))))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	ew.printf("\n<details>\n<summary>%d accepted finding(s)</summary>\n\n", len(lines))
+	for i, l := range lines {
+		if i == maxMarkdownAccepted {
+			ew.printf("- …and %d more\n", len(lines)-i)
+			break
+		}
+		ew.printf("%s\n", l)
+	}
+	ew.printf("\n</details>\n")
 }
 
 // code renders s as an inline code span, which Markdown shows literally.

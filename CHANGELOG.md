@@ -4,25 +4,37 @@
 
 ### Added
 
-- **Accept reviewed findings**: `safe-install accept` marks code findings as reviewed and
-  harmless, so they no longer fail scans but remain visible in reports. Acceptances are
-  pinned to a package version, rule, file, and SHA256 hash; they expire on a given date and
-  can be revoked. Organization policy can forbid block-level acceptances. The command runs
-  only in a terminal, preventing CI from accepting findings. Accepted findings appear in
-  reports as `ACCEPTED (reason)` and are counted separately in summaries.
-- Acceptance filtering in `scan`, `check`, and `install` commands: all findings are checked
-  against acceptances and marked as accepted where they match.
-- `safe-install accept --revoke` removes an acceptance; `--expires 90d` or a date sets
-  expiry; `--global` stores acceptances in the user config; `--force` overrides org policy.
-- LLM agents are instructed that they must never run `safe-install accept` or edit
-  `acceptFindings` in configuration; only humans can mark findings as safe.
-- Stale acceptance pruning via `PruneAcceptances()` for cleanup and maintenance.
+- **Accept reviewed findings**: `safe-install accept <pkg>@<version> <rule> --reason "..."`
+  records that a human reviewed a finding and judged it harmless. Scoped names work.
+  - Code findings (`scan`, install's code scan) need `--file`; the acceptance is pinned to
+    package version, rule, file and the file's sha256, computed by the command.
+  - Package-level findings (`check`: registry rules such as `SI-REC-002`) take no `--file`;
+    they are pinned to the lockfile integrity (sha512) and an `evidence` string such as the
+    publisher name. A new release by another unknown publisher is flagged again.
+  - `accept` re-checks the package, shows the finding (flagged lines, or the evidence) and
+    asks for confirmation. It runs only on a terminal and refuses in CI, pipes and agents.
+  - `--expires 90d|YYYY-MM-DD`, `--global` (user config), `--revoke`, `--force`.
+  - Never acceptable: block findings, known-malware advisories, OSV vulnerabilities above
+    medium without `--force`, and rules the organization policy lists in `disallowAccept`.
+    Organization-policy acceptances are inherited by projects.
+  - An acceptance stops matching, with a message saying why, when it expires, when the file
+    hash, integrity or evidence changes, or for any other version.
+- Accepted findings are applied in `scan`, `check` and `install`, and do not count toward
+  `--fail-on`. The GitHub action honours them through `check`, with no new input.
+- Stale acceptances (package@version no longer in the lockfile) are warned about by `scan`
+  and `check`; `safe-install scan --prune-accepted` removes them, and expired ones too.
+- `disallowAccept` in the organization policy: rule-ID globs (`"*"` for all) that cannot be
+  accepted. Projects cannot weaken it.
+- `safe-install llm`: `accept` requires an interactive terminal and asks for confirmation (a speed bump, not a security boundary); agents must never run `accept` or edit `acceptFindings`; when a
+  finding blocks them they report it and the exact `accept` command for the human to run.
 
 ### Changed
 
-- Code scanning output format now includes `"accepted"` field on findings in JSON output.
-- Text report summaries now show accepted findings count: `"N block, M high (K accepted), ..."`
-- Findings marked as accepted remain visible in all report formats (text, JSON, SARIF).
+- Report output for accepted findings: text `ACCEPTED (<reason>, by <by>, until <expires>)`;
+  JSON `accepted` field; SARIF external suppression; the PR comment lists them in a
+  collapsed section.
+- Summaries count accepted findings separately: `0 block, 0 high (1 accepted), ...`, by each
+  package's worst unaccepted level.
 
 ## 0.3.0
 

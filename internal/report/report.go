@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/policy"
 )
 
 // Text writes a human-readable report: risky packages worst first, then a summary.
@@ -27,35 +29,21 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 	}
 	ew.printf("\n")
 
-	counts := map[analyze.Level]int{}
-	acceptedCount := 0
-	for _, res := range r.Results {
-		if res.Err == nil {
-			counts[res.Level]++
-			// Count accepted findings separately (not included in level count)
-			for _, f := range res.Findings {
-				if f.Accepted != nil {
-					acceptedCount++
-					// Adjust level count for accepted findings
-					lvl, _ := analyze.ParseLevel(f.Severity.String())
-					if lvl != analyze.LevelNone {
-						counts[lvl]--
-					}
-				}
-			}
-		}
-	}
-	for lvl := analyze.LevelBlock; lvl > analyze.LevelNone; lvl-- {
+	counts, accepted := Counts(r)
+	for lvl := analyze.LevelBlock; lvl >= analyze.LevelNone; lvl-- {
 		for _, res := range r.Results {
-			if res.Err != nil || res.Level != lvl {
+			if res.Err != nil || res.Level != lvl || (lvl == analyze.LevelNone && !hasAccepted(res)) {
 				continue
 			}
-			ew.printf("\n%-6s %s  (score %d%s)\n", strings.ToUpper(lvl.String()), res.Package.ID, res.Score, tags(res))
+			name := strings.ToUpper(lvl.String())
+			if lvl == analyze.LevelNone {
+				name = "OK" // every finding of this package was accepted
+			}
+			ew.printf("\n%-6s %s  (score %d%s)\n", name, res.Package.ID, res.Score, tags(res))
 			for _, f := range res.Findings {
+				ew.printf("       %s  %s\n", f.Rule, f.Message)
 				if f.Accepted != nil {
-					ew.printf("       ACCEPTED (%s)  %s  %s\n", f.Rule, f.Message, "reviewed and safe")
-				} else {
-					ew.printf("       %s  %s\n", f.Rule, f.Message)
+					ew.printf("         ACCEPTED (%s)\n", AcceptedNote(f.Accepted))
 				}
 			}
 		}
@@ -71,15 +59,79 @@ func Text(w io.Writer, r *analyze.Report, source string) error {
 			}
 		}
 	}
-	// Format summary: show accepted count in parentheses if any
-	summary := fmt.Sprintf("%d block, %d high, %d medium, %d low",
-		counts[analyze.LevelBlock], counts[analyze.LevelHigh], counts[analyze.LevelMedium], counts[analyze.LevelLow])
-	if acceptedCount > 0 {
-		summary += fmt.Sprintf(" (%d accepted)", acceptedCount)
-	}
-	summary += fmt.Sprintf(", %d clean\n", counts[analyze.LevelNone])
-	ew.printf("\n%s", summary)
+	ew.printf("\n%s\n", Summary(counts, accepted))
 	return ew.err
+}
+
+// Counts returns how many packages sit at each level, counting a package by
+// its worst unaccepted finding, and how many accepted findings there are per
+// severity level.
+func Counts(r *analyze.Report) (packages map[analyze.Level]int, accepted map[analyze.Level]int) {
+	packages, accepted = map[analyze.Level]int{}, map[analyze.Level]int{}
+	for _, res := range r.Results {
+		if res.Err != nil {
+			continue
+		}
+		packages[res.Level]++
+		for _, f := range res.Findings {
+			if f.Accepted != nil {
+				accepted[severityLevel(f.Severity)]++
+			}
+		}
+	}
+	return packages, accepted
+}
+
+func severityLevel(s analyze.Severity) analyze.Level {
+	switch s {
+	case analyze.Block:
+		return analyze.LevelBlock
+	case analyze.High:
+		return analyze.LevelHigh
+	case analyze.Medium:
+		return analyze.LevelMedium
+	}
+	return analyze.LevelLow
+}
+
+// Summary is the closing line: packages by worst unaccepted level, each
+// followed by "(N accepted)" when accepted findings of that severity exist,
+// e.g. "0 block, 0 high (1 accepted), 0 medium, 0 low, 12 clean".
+func Summary(packages, accepted map[analyze.Level]int) string {
+	var parts []string
+	for _, lvl := range []analyze.Level{analyze.LevelBlock, analyze.LevelHigh, analyze.LevelMedium, analyze.LevelLow} {
+		part := fmt.Sprintf("%d %s", packages[lvl], lvl)
+		if n := accepted[lvl]; n > 0 {
+			part += fmt.Sprintf(" (%d accepted)", n)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ") + fmt.Sprintf(", %d clean", packages[analyze.LevelNone])
+}
+
+func hasAccepted(res analyze.Result) bool {
+	for _, f := range res.Findings {
+		if f.Accepted != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptedNote describes an acceptance: "reason, by who, until date".
+// The strings come from a file a teammate can edit, so control characters
+// (newlines, ESC and the other C0/C1 controls) are replaced by a space.
+func AcceptedNote(a *policy.Acceptance) string {
+	note := plainText(a.Reason)
+	if a.By != "" {
+		note += ", by " + plainText(a.By)
+	}
+	if a.Expires != "" {
+		note += ", until " + plainText(a.Expires)
+	} else {
+		note += ", no expiry"
+	}
+	return note
 }
 
 func tags(res analyze.Result) string {
@@ -102,9 +154,12 @@ type jsonDiff struct {
 }
 
 type jsonFinding struct {
-	Rule     string `json:"rule"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
+	Rule     string             `json:"rule"`
+	Severity string             `json:"severity"`
+	Message  string             `json:"message"`
+	File     string             `json:"file,omitempty"`
+	Evidence string             `json:"evidence,omitempty"`
+	Accepted *policy.Acceptance `json:"accepted,omitempty"`
 }
 
 type jsonPackage struct {
@@ -141,7 +196,7 @@ func JSON(w io.Writer, r *analyze.Report, source string) error {
 			Score: res.Score, Level: res.Level.String(), Findings: []jsonFinding{},
 		}
 		for _, f := range res.Findings {
-			p.Findings = append(p.Findings, jsonFinding{f.Rule, f.Severity.String(), f.Message})
+			p.Findings = append(p.Findings, jsonFinding{f.Rule, f.Severity.String(), f.Message, f.File, f.Evidence, f.Accepted})
 		}
 		if res.Err != nil {
 			p.Error = res.Err.Error()
@@ -163,4 +218,15 @@ func (e *errWriter) printf(format string, args ...any) {
 	if e.err == nil {
 		_, e.err = fmt.Fprintf(e.w, format, args...)
 	}
+}
+
+// plainText replaces control characters with a space, so a stored string
+// cannot start a new line or an escape sequence in a terminal.
+func plainText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }

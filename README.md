@@ -194,36 +194,90 @@ the package manager itself applies to every package.
 
 ### Accepting a reviewed finding
 
-Code scanning rules sometimes flag code that's harmless: registry-polled sources, well-known patterns, or safe implementations. After review, you can record that a finding is safe:
+Some findings are harmless after a human has looked at them. `safe-install accept` records
+that judgement in `.safe-install.json`, pinned to exactly what was reviewed. Two kinds:
+
+**Code findings** (from `scan` and the code scan that runs on install: `SI-CODE-*` and
+similar) need `--file`, a path relative to the package. The acceptance is pinned to the
+package version, rule, file and the file's sha256, which the command computes itself:
 
 ```sh
-safe-install accept vite@8.3.8 SI-CODE-001 --reason "registry entries only" --expires 2027-06-30
+safe-install accept vite@8.3.8 SI-CODE-001 --file dist/node/chunks/node.js \
+  --reason "only reads registry entries from a local index" --expires 90d
 ```
-
-The command marks the finding in `.safe-install.json`:
 
 ```json
 {
   "acceptFindings": {
-    "vite": [
-      {
-        "version": "8.3.8",
-        "rule": "SI-CODE-001",
-        "file": "",
-        "hash": "",
-        "reason": "registry entries only",
-        "expires": "2027-06-30",
-        "by": "you@example.com",
-        "at": "2026-11-12"
-      }
-    ]
+    "vite": [{
+      "version": "8.3.8",
+      "rule": "SI-CODE-001",
+      "file": "dist/node/chunks/node.js",
+      "hash": "sha256:<hex>",
+      "reason": "only reads registry entries from a local index",
+      "by": "Ben Example", "at": "2026-11-12", "expires": "2027-02-10"
+    }]
   }
 }
 ```
 
-Accepted findings remain visible in reports (marked as `ACCEPTED`) but do not fail scans. Commit the file so your team shares the acceptances. Use `--revoke` to remove an acceptance, `--expires 90d` for a duration, or `--global` to store it in your user config instead. `--force` lets you override an org policy that forbids accepting.
+**Package-level findings** (from `check`: registry rules such as `SI-REC-001` release age,
+`SI-REC-002` publisher or provenance changes, `SI-POP-001` typosquats) have no file, so
+leave `--file` out. They are pinned to the lockfile's integrity (sha512) and an `evidence`
+string the command records, such as the publisher name:
 
-The `accept` command runs only in a terminal and forbids use in CI: only humans review and accept findings. Acceptances expire on the date given, and can be pruned with `safe-install cache clean`.
+```sh
+safe-install accept tslib@2.9.1 SI-REC-002 \
+  --reason "Microsoft's release account (npmjs@microsoft.com), listed maintainer; no install scripts" \
+  --expires 2027-05-12
+```
+
+```json
+{
+  "acceptFindings": {
+    "tslib": [{
+      "version": "2.9.1",
+      "rule": "SI-REC-002",
+      "integrity": "sha512-…",
+      "evidence": "publisher microsoft1es",
+      "reason": "Microsoft's release account (npmjs@microsoft.com), listed maintainer; no install scripts",
+      "by": "Ben Example", "at": "2026-11-12", "expires": "2027-05-12"
+    }]
+  }
+}
+```
+
+Scoped names work: `safe-install accept @scope/name@1.2.3 <rule> ...`. `--expires` takes
+`90d` or `YYYY-MM-DD`. `--global` stores the entry in your user config. `--revoke` removes it.
+
+Before writing anything, `accept` re-checks the package, shows the finding (code: the
+flagged lines with context; package-level: the evidence) and asks you to confirm. It
+requires an interactive terminal and asks for confirmation. That is a speed bump, not a
+security boundary: the protection against agents is the `safe-install llm` rule and code
+review of `.safe-install.json` changes. Each flagged file needs its own acceptance.
+
+Install-script (`SI-SCR-*`), policy (`SI-POL-*`) and build-code (`SI-BLD-002`) findings
+cannot be accepted: use `safe-install approve` / `allowScripts`.
+
+An acceptance stops matching, and the finding is flagged again with a message saying why,
+when it expires, when the file hash, integrity or evidence changes (a new release by another
+unknown publisher is flagged even under the same rule), and for any other version.
+
+Never acceptable: block findings, known-malware advisories, OSV vulnerabilities above
+medium (unless `--force`), and rules the organization policy lists in `disallowAccept`.
+Acceptances in the org policy are inherited by projects.
+
+Accepted findings stay visible but do not count toward `--fail-on`:
+
+- text: `ACCEPTED (<reason>, by <by>, until <expires>)`;
+- JSON: an `accepted` field on the finding;
+- SARIF: an external suppression;
+- summary: `0 block, 0 high (1 accepted), 0 medium, 0 low, N clean`;
+- PR comment: accepted findings in a collapsed section.
+
+`scan` and `check` warn about stale entries (the package@version is no longer in the
+lockfile). `safe-install scan --prune-accepted` removes them, and expired ones too. Commit
+the file so your team shares the acceptances.
 
 ### Organization policy
 
@@ -239,13 +293,15 @@ anyone can change one in a pull request.
   "minReleaseAge": "7d",
   "failOn": "medium",
   "blockPackages": ["event-stream", "@evil/*"],
+  "disallowAccept": ["SI-REC-*", "SI-CODE-003"],
   "allowScripts": { "esbuild": { "trust": "provenance", "repository": "https://github.com/evanw/esbuild" } }
 }
 ```
 
 Projects build on it but cannot weaken it: blocked packages are reported as `SI-POL-001`
 (blocking) and their scripts never run, even if a project approved them; `minReleaseAge`
-and `failOn` are at least as strict as the organization's. The policy must be https; if it
+and `failOn` are at least as strict as the organization's. `disallowAccept` lists rule-ID
+globs that `safe-install accept` refuses (`"*"` for all); projects cannot weaken it. The policy must be https; if it
 cannot be fetched, the last cached copy is used with a warning, and with no cache
 safe-install stops rather than running without it.
 
@@ -409,7 +465,9 @@ The action downloads the release binary for the runner (checksum-verified; `vers
 picks a release, `source` builds from the action's checkout) and fails the job when a
 package reaches `fail-on`. On pull requests it checks only the packages the PR adds or
 upgrades (`diff: auto`, comparing with the base branch) and scans their code
-(`deep: auto`); set `diff: none` to always check everything.
+(`deep: auto`); set `diff: none` to always check everything. It honours findings accepted
+in `.safe-install.json` (see [Accepting a reviewed finding](#accepting-a-reviewed-finding));
+no input is needed.
 
 A short summary of the risky packages goes to the job summary on every run. With
 `comment: true`, it is also posted on the pull request, but only when there is something

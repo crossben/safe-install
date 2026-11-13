@@ -59,7 +59,7 @@ func phpEvalAfterNetwork(src string) bool {
 // ComposerDist scans a Composer dist (a zip, usually a GitHub zipball) in
 // memory: its PHP files, minus tests and docs.
 func ComposerDist(data []byte) ([]analyze.Finding, error) {
-	c := &collector{byRule: map[string]*agg{}}
+	c := &collector{}
 	err := walkZip(data, func(entry string, size int64, open func() (io.Reader, error)) error {
 		rel, ok := safeRel(entry)
 		if !ok || size > maxFileBytes || !strings.HasSuffix(strings.ToLower(rel), ".php") {
@@ -83,14 +83,7 @@ func ComposerDist(data []byte) ([]analyze.Finding, error) {
 		if c.total += int64(len(data)); c.total > maxPackageBytes {
 			return errBudget
 		}
-		for _, h := range scanPHP(string(data)) {
-			a := c.byRule[h.rule]
-			if a == nil {
-				a = &agg{sev: h.sev, files: map[string]string{}}
-				c.byRule[h.rule] = a
-			}
-			a.files[rel] = h.what
-		}
+		c.record(rel, data, scanPHP(string(data)))
 		return nil
 	})
 	if err != nil && !errors.Is(err, errBudget) {
@@ -107,7 +100,7 @@ func ComposerInstalled(dir string) []analyze.Finding {
 		return nil
 	}
 	defer func() { _ = root.Close() }()
-	c := &collector{byRule: map[string]*agg{}}
+	c := &collector{}
 	fsys := root.FS()
 	_ = fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -133,14 +126,7 @@ func ComposerInstalled(dir string) []analyze.Finding {
 		if c.total += int64(len(data)); c.total > maxPackageBytes {
 			return fs.SkipAll
 		}
-		for _, h := range scanPHP(string(data)) {
-			a := c.byRule[h.rule]
-			if a == nil {
-				a = &agg{sev: h.sev, files: map[string]string{}}
-				c.byRule[h.rule] = a
-			}
-			a.files[p] = h.what
-		}
+		c.record(p, data, scanPHP(string(data)))
 		return nil
 	})
 	return c.findings()

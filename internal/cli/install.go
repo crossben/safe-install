@@ -23,6 +23,7 @@ import (
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/registry"
+	"github.com/crossben/safe-install/internal/report"
 	"github.com/crossben/safe-install/internal/sandbox"
 	"github.com/crossben/safe-install/internal/scripts"
 	"github.com/crossben/safe-install/internal/scriptshell"
@@ -85,6 +86,7 @@ type session struct {
 	monitor monitor.Mode
 	flagged bool                         // the monitor saw high-risk behavior
 	code    map[string][]analyze.Finding // code-scan findings by package ID
+	warned  map[string]bool              // acceptance warnings already printed
 	graph   *lockfile.Graph
 }
 
@@ -198,6 +200,17 @@ func runInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add bool) e
 	return nil
 }
 
+// warnOnce prints an acceptance warning unless this session already did.
+func (s *session) warnOnce(line string) {
+	if s.warned == nil {
+		s.warned = map[string]bool{}
+	}
+	if !s.warned[line] {
+		s.warned[line] = true
+		s.w.printf("%s\n", line)
+	}
+}
+
 // candidates finds the installed packages with install scripts, ordered
 // dependencies first, with findings, level and approval state filled in.
 func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
@@ -206,9 +219,18 @@ func (s *session) candidates() ([]*scripts.Candidate, *lockfile.Graph, error) {
 		return nil, nil, err
 	}
 	s.graph = graph
-	s.code = codeFindings(s.cmd, s.g, scripts.Installed(s.dir), graph)
+	installed := scripts.Installed(s.dir)
+	s.code = codeFindings(s.cmd, s.g, installed, graph)
 	cands, _ := scripts.Discover(s.dir, graph)
 	cands = scripts.Order(cands, graph)
+	// codeReport and the --ci gate read s.code, so accepted findings must be
+	// marked there too (candidates are matched again in assess; the warning
+	// for a rejected entry prints once).
+	for id, fs := range s.code {
+		if p, ok := graph.Packages[id]; ok {
+			acceptFindings(p, "", fs, s.pol, installed[id], s.warnOnce)
+		}
+	}
 	s.assess(cands, graph.Format)
 	return cands, graph, nil
 }
@@ -235,6 +257,7 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 		sub.Packages[c.Package.ID] = c.Package
 	}
 	registryFindings := map[string][]analyze.Finding{}
+	registryIntegrity := map[string]string{}
 	if fetcher, err := newFetcher(s.g); err == nil && len(cands) > 0 {
 		minAge, _ := parseMinAge(s.g.minAge)
 		cfg := analysisConfig(s.g, s.pol, minAge)
@@ -247,13 +270,13 @@ func (s *session) assess(cands []*scripts.Candidate, format lockfile.Format) {
 		}
 		for _, res := range rep.Results {
 			registryFindings[res.Package.ID] = res.Findings
+			registryIntegrity[res.Package.ID] = res.RegistryIntegrity
 		}
 	}
 	for _, c := range cands {
 		c.Findings = append(scripts.Scan(c), scriptRelevant(registryFindings[c.Package.ID])...)
 		c.Findings = append(c.Findings, s.code[c.Package.ID]...)
-		// Apply acceptances to all findings
-		c.Findings = ApplyAcceptances(c.Findings, s.pol, c.Package.Name, c.Package.Version, "", "")
+		acceptFindings(c.Package, registryIntegrity[c.Package.ID], c.Findings, s.pol, c.Dir, s.warnOnce)
 		state, f := scripts.ApprovalState(c, s.pol, time.Now(), s.provenance())
 		c.State = state
 		if f != nil {
@@ -458,7 +481,11 @@ func describeScripts(w *lineWriter, c *scripts.Candidate) {
 		w.printf("  %-11s %s%s\n", s+":", c.Scripts[s], note)
 	}
 	for _, f := range c.Findings {
-		if f.Rule != "SI-SCR-001" {
+		switch {
+		case f.Rule == "SI-SCR-001":
+		case f.Accepted != nil:
+			w.printf("  - %s  %s\n    ACCEPTED (%s)\n", f.Rule, f.Message, report.AcceptedNote(f.Accepted))
+		default:
 			w.printf("  ! %s  %s\n", f.Rule, f.Message)
 		}
 	}
@@ -545,6 +572,10 @@ func (s *session) codeReport(cands []*scripts.Candidate) string {
 		_, level := analyze.Score(s.code[id])
 		w.printf("\n%s  risk: %s\n", id, strings.ToUpper(level.String()))
 		for _, f := range s.code[id] {
+			if f.Accepted != nil {
+				w.printf("  - %s  %s\n    ACCEPTED (%s)\n", f.Rule, f.Message, report.AcceptedNote(f.Accepted))
+				continue
+			}
 			w.printf("  ! %s  %s\n", f.Rule, f.Message)
 		}
 	}

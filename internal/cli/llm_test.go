@@ -29,4 +29,10 @@ func TestLLMGuide(t *testing.T) {
 			t.Errorf("guide is missing %q", s)
 		}
 	}
+	// Agents must not accept findings, and must report the command instead.
+	for _, s := range []string{"run `safe-install accept`", "safe-install accept <pkg>@<version> <rule> [--file <path>] --reason"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("guide is missing %q", s)
+		}
+	}
 }

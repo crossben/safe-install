@@ -82,6 +82,7 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		return err
 	}
 
+	fullGraph := graph // --diff narrows graph to the changed packages
 	var baseMissing bool
 	if diff != "" {
 		base, err := baseGraph(path, diff)
@@ -129,12 +130,10 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("%s does not exist at %s: every package counts as new", filepath.Base(path), diff))
 	}
 
-	// Apply acceptances to all findings in the report
-	for i := range rep.Results {
-		res := &rep.Results[i]
-		res.Findings = ApplyAcceptances(res.Findings, pol, res.Package.Name, res.Package.Version, "", "")
-		res.Score, res.Level = analyze.Score(res.Findings)
-	}
+	// check reads no installed files: --deep findings carry the hash of the
+	// tarball entry they came from.
+	applyAcceptances(rep, pol, nil, cmd.ErrOrStderr())
+	warnStale(cmd.ErrOrStderr(), pol, fullGraph)
 
 	source := filepath.Base(path)
 	sarif := func(w io.Writer) error {
@@ -170,8 +169,7 @@ func runCheck(cmd *cobra.Command, g *globalFlags, pol *policy.Policy, failOn ana
 	if n := rep.Failed(); n > 0 {
 		return &exitError{ExitToolError, fmt.Errorf("%d package(s) could not be checked", n)}
 	}
-	if failOn != analyze.LevelNone && WorstUnacceptedLevel(rep.Results) >= failOn {
-		worst := WorstUnacceptedLevel(rep.Results)
+	if worst := rep.Worst(); failOn != analyze.LevelNone && worst >= failOn {
 		return &exitError{ExitPolicyFailure, fmt.Errorf("found %s-risk packages (--fail-on %s)", worst, failOn)}
 	}
 	return nil

@@ -22,6 +22,7 @@ import (
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/pm"
 	"github.com/crossben/safe-install/internal/policy"
+	"github.com/crossben/safe-install/internal/report"
 )
 
 // Python installs (uv). The model mirrors npm's: nothing that runs code
@@ -154,8 +155,12 @@ func runPythonInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add b
 	}
 
 	// 4. After install: .pth files that run code at every Python start.
-	pth := pthFindings(dir, projectName(dir))
+	pth := pthFindings(dir, projectName(dir), graph, pol, func(line string) { w.printf("%s\n", line) })
 	for _, f := range pth {
+		if f.Accepted != nil {
+			w.printf("safe-install: %s  %s\n    ACCEPTED (%s)\n", f.Rule, f.Message, report.AcceptedNote(f.Accepted))
+			continue
+		}
 		w.printf("safe-install: %s  %s\n", f.Rule, f.Message)
 	}
 	var built []string
@@ -168,7 +173,7 @@ func runPythonInstall(cmd *cobra.Command, g *globalFlags, pmArgs []string, add b
 	w.printf("safe-install: installed from wheels; built from source after approval: %s\n", listOrNone(built))
 	if g.ci {
 		for _, f := range pth {
-			if f.Severity >= analyze.High {
+			if f.Severity >= analyze.High && f.Accepted == nil {
 				return &exitError{ExitPolicyFailure, errors.New(f.Message)}
 			}
 		}
@@ -198,6 +203,14 @@ func sdistOf(p *lockfile.Package) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// pthPackage is the locked package named owner, nil without a graph.
+func pthPackage(g *lockfile.Graph, owner string) *lockfile.Package {
+	if g == nil {
+		return nil
+	}
+	return findByName(g, owner)
 }
 
 func findByName(g *lockfile.Graph, name string) *lockfile.Package {
@@ -251,6 +264,9 @@ func (s *pySession) review(builds map[string]*pyBuild) error {
 	cfg.RegistryHosts, cfg.Downloads = pypiHosts(), nil
 	rep := analyze.Analyze(s.cmd.Context(), sub, fetcher, cfg)
 	deepScan(s.cmd, s.g, rep)
+	// The sdist is not unpacked here, so code findings match on the hash the
+	// scanner computed (nil pkgDir).
+	applyAcceptances(rep, s.pol, nil, s.cmd.ErrOrStderr())
 	for _, w := range rep.Warnings {
 		s.w.printf("safe-install: %s\n", w)
 	}
@@ -323,7 +339,11 @@ func (s *pySession) review(builds map[string]*pyBuild) error {
 func describePyBuild(w *lineWriter, b *pyBuild) {
 	w.printf("\n%s  risk: %s\n", b.pkg.ID, strings.ToUpper(b.res.Level.String()))
 	for _, f := range b.res.Findings {
-		if f.Rule != "SI-BLD-001" {
+		switch {
+		case f.Rule == "SI-BLD-001":
+		case f.Accepted != nil:
+			w.printf("  - %s  %s\n    ACCEPTED (%s)\n", f.Rule, f.Message, report.AcceptedNote(f.Accepted))
+		default:
 			w.printf("  ! %s  %s\n", f.Rule, f.Message)
 		}
 	}
@@ -352,7 +372,10 @@ func projectName(dir string) string {
 // pthFindings checks the .pth files at the top of the environment's
 // site-packages (only those are processed at startup), naming the package
 // whose RECORD lists each. The project's own (an editable install) is skipped.
-func pthFindings(dir, project string) []analyze.Finding {
+//
+// File is the path relative to site-packages, as `scan` records it. When graph
+// and pol are given, recorded acceptances are applied, checking the file's hash.
+func pthFindings(dir, project string, graph *lockfile.Graph, pol *policy.Policy, warn func(string)) []analyze.Finding {
 	var sites []string
 	for _, pattern := range []string{".venv/lib/python*/site-packages", ".venv/Lib/site-packages"} {
 		m, _ := filepath.Glob(filepath.Join(dir, filepath.FromSlash(pattern)))
@@ -382,7 +405,15 @@ func pthFindings(dir, project string) []analyze.Finding {
 			if owners[filepath.Base(p)] == "" && filepath.Base(p) == "_virtualenv.pth" && strings.TrimSpace(string(data)) == "import _virtualenv" {
 				continue
 			}
-			out = append(out, codescan.Pth(owner, filepath.Base(p), string(data))...)
+			rel, err := filepath.Rel(site, p)
+			if err != nil {
+				continue
+			}
+			fs := codescan.Pth(owner, filepath.ToSlash(rel), string(data))
+			if pkg := pthPackage(graph, owner); pkg != nil && pol != nil && warn != nil {
+				acceptFindings(pkg, "", fs, pol, site, warn)
+			}
+			out = append(out, fs...)
 		}
 	}
 	return out

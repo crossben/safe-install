@@ -38,11 +38,18 @@ type sarifLocation struct {
 }
 
 type sarifResult struct {
-	RuleID              string            `json:"ruleId"`
-	Level               string            `json:"level"`
-	Message             sarifMessage      `json:"message"`
-	Locations           []sarifLocation   `json:"locations"`
-	PartialFingerprints map[string]string `json:"partialFingerprints"`
+	RuleID              string             `json:"ruleId"`
+	Level               string             `json:"level"`
+	Message             sarifMessage       `json:"message"`
+	Locations           []sarifLocation    `json:"locations"`
+	PartialFingerprints map[string]string  `json:"partialFingerprints"`
+	Suppressions        []sarifSuppression `json:"suppressions,omitempty"`
+}
+
+// sarifSuppression marks a result as reviewed and accepted outside the code.
+type sarifSuppression struct {
+	Kind          string `json:"kind"`
+	Justification string `json:"justification"`
 }
 
 // SARIF writes a SARIF 2.1.0 log for code scanning. uri is the lockfile path
@@ -65,13 +72,17 @@ func SARIF(w io.Writer, r *analyze.Report, uri string, lockData []byte, toolVers
 			loc.PhysicalLocation.ArtifactLocation.URI = uri
 			loc.PhysicalLocation.Region.StartLine = findLine(lockData, res.Package.Name, res.Package.Version)
 			sum := sha256.Sum256([]byte(f.Rule + "\x00" + res.Package.ID + "\x00" + f.Message))
-			results = append(results, sarifResult{
+			sr := sarifResult{
 				RuleID:              f.Rule,
 				Level:               sarifLevel(f.Severity),
 				Message:             sarifMessage{res.Package.ID + ": " + f.Message},
 				Locations:           []sarifLocation{loc},
 				PartialFingerprints: map[string]string{"safeInstall/v1": hex.EncodeToString(sum[:16])},
-			})
+			}
+			if f.Accepted != nil {
+				sr.Suppressions = []sarifSuppression{{Kind: "external", Justification: f.Accepted.Reason}}
+			}
+			results = append(results, sr)
 		}
 	}
 	doc := map[string]any{

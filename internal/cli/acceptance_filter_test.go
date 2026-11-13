@@ -1,235 +1,254 @@
 package cli
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/crossben/safe-install/internal/analyze"
+	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/policy"
 )
 
-func TestApplyAcceptancesMarksMatching(t *testing.T) {
-	// Setup: policy with one acceptance
-	p := &policy.Policy{
-		File: policy.File{
-			AcceptFindings: map[string][]policy.Acceptance{
-				"vite": {
-					{
-						Version: "8.3.8",
-						Rule:    "SI-CODE-001",
-						File:    "dist/node/chunks/node.js",
-						Hash:    "sha256:abc123",
-						Reason:  "registry read only",
-					},
-				},
-			},
-		},
-	}
+func polWith(pkg string, accs ...policy.Acceptance) *policy.Policy {
+	return &policy.Policy{File: policy.File{AcceptFindings: map[string][]policy.Acceptance{pkg: accs}}}
+}
 
-	// Create a finding that matches
-	findings := []analyze.Finding{
-		{
-			Rule:     "SI-CODE-001",
-			Severity: analyze.High,
-			Message:  "test message",
-		},
-	}
-
-	// Apply acceptances with matching package, version, rule, file, hash
-	result := ApplyAcceptances(findings, p, "vite", "8.3.8", "dist/node/chunks/node.js", "sha256:abc123")
-
-	if len(result) != 1 {
-		t.Errorf("ApplyAcceptances returned %d findings, want 1", len(result))
-	}
-
-	if result[0].Accepted == nil {
-		t.Errorf("Accepted field is nil, want acceptance object")
-	} else if acc, ok := result[0].Accepted.(*policy.Acceptance); ok {
-		if acc.Reason != "registry read only" {
-			t.Errorf("Accepted reason = %q, want %q", acc.Reason, "registry read only")
+func pkgDirWith(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
+	return dir
 }
 
-func TestApplyAcceptancesSkipsExpired(t *testing.T) {
-	_ = time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
-
-	p := &policy.Policy{
-		File: policy.File{
-			AcceptFindings: map[string][]policy.Acceptance{
-				"vite": {
-					{
-						Version: "8.3.8",
-						Rule:    "SI-CODE-001",
-						File:    "dist/node/chunks/node.js",
-						Hash:    "sha256:abc123",
-						Reason:  "registry read only",
-						Expires: "2026-11-11", // expired
-					},
-				},
-			},
-		},
-	}
-
-	findings := []analyze.Finding{
-		{
-			Rule:     "SI-CODE-001",
-			Severity: analyze.High,
-			Message:  "test message",
-		},
-	}
-
-	result := ApplyAcceptances(findings, p, "vite", "8.3.8", "dist/node/chunks/node.js", "sha256:abc123")
-
-	if len(result) != 1 {
-		t.Errorf("ApplyAcceptances returned %d findings, want 1", len(result))
-	}
-
-	if result[0].Accepted != nil {
-		t.Errorf("Accepted field should be nil for expired acceptance, but got %v", result[0].Accepted)
-	}
+func codeReport(file string, sev analyze.Severity) *analyze.Report {
+	p := &lockfile.Package{ID: "vite@8.3.8", Name: "vite", Version: "8.3.8", Integrity: "sha512-v"}
+	fs := []analyze.Finding{{Rule: "SI-CODE-001", Severity: sev, Message: file + " runs a downloader", File: file}}
+	res := analyze.Result{Package: p, Findings: fs}
+	res.Score, res.Level = analyze.Score(fs)
+	return &analyze.Report{Results: []analyze.Result{res}}
 }
 
-func TestApplyAcceptancesDoesNotAcceptBlockFindings(t *testing.T) {
-	p := &policy.Policy{
-		File: policy.File{
-			AcceptFindings: map[string][]policy.Acceptance{
-				"bad-pkg": {
-					{
-						Version: "1.0.0",
-						Rule:    "SI-INT-001",
-						File:    "package.json",
-						Hash:    "sha256:def456",
-						Reason:  "integrity issue reviewed",
-					},
-				},
-			},
-		},
+func apply(rep *analyze.Report, pol *policy.Policy, dir string) string {
+	var warn bytes.Buffer
+	applyAcceptances(rep, pol, func(string) string { return dir }, &warn)
+	return warn.String()
+}
+
+func TestApplyCodeAcceptanceNeedsFileAndHash(t *testing.T) {
+	dir := pkgDirWith(t, map[string]string{"dist/node.js": "evil()", "dist/other.js": "evil()"})
+	hash, err := sha256File(dir, "dist/node.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := policy.Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "dist/node.js", Hash: hash, Reason: "registry read only", By: "ben"}
+
+	rep := codeReport("dist/node.js", analyze.High)
+	if warn := apply(rep, polWith("vite", acc), dir); warn != "" {
+		t.Errorf("warning for a good acceptance: %q", warn)
+	}
+	got := rep.Results[0]
+	if got.Findings[0].Accepted == nil || got.Findings[0].Accepted.Reason != "registry read only" {
+		t.Fatalf("not accepted: %+v", got.Findings[0])
+	}
+	if got.Level != analyze.LevelNone || got.Score != 0 || rep.Worst() != analyze.LevelNone {
+		t.Errorf("score/level still count the accepted finding: %d %v", got.Score, got.Level)
 	}
 
-	// Block findings cannot be accepted
-	findings := []analyze.Finding{
-		{
-			Rule:     "SI-INT-001",
-			Severity: analyze.Block,
-			Message:  "integrity mismatch",
-		},
+	// The file changed after the review.
+	if err := os.WriteFile(filepath.Join(dir, "dist/node.js"), []byte("evil(); worse()"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rep = codeReport("dist/node.js", analyze.High)
+	warn := apply(rep, polWith("vite", acc), dir)
+	if rep.Results[0].Findings[0].Accepted != nil || rep.Results[0].Level != analyze.LevelHigh {
+		t.Errorf("changed file still accepted")
+	}
+	if !strings.Contains(warn, "hash mismatch") || !strings.Contains(warn, "vite@8.3.8 SI-CODE-001 dist/node.js") {
+		t.Errorf("warning = %q", warn)
 	}
 
-	result := ApplyAcceptances(findings, p, "bad-pkg", "1.0.0", "package.json", "sha256:def456")
-
-	if len(result) != 1 {
-		t.Errorf("ApplyAcceptances returned %d findings, want 1", len(result))
+	// Another file of the same package.
+	rep = codeReport("dist/other.js", analyze.High)
+	apply(rep, polWith("vite", acc), dir)
+	if rep.Results[0].Findings[0].Accepted != nil {
+		t.Error("an acceptance for one file covers another")
 	}
 
-	if result[0].Accepted != nil {
-		t.Errorf("Block finding should not be accepted, but Accepted is %v", result[0].Accepted)
+	// Another version.
+	acc.Version = "8.3.7"
+	rep = codeReport("dist/node.js", analyze.High)
+	apply(rep, polWith("vite", acc), dir)
+	if rep.Results[0].Findings[0].Accepted != nil {
+		t.Error("an acceptance for one version covers another")
 	}
 }
 
-func TestCountByStatusSeparatesAccepted(t *testing.T) {
-	findings := []analyze.Finding{
-		{Rule: "SI-CODE-001", Severity: analyze.High, Message: "high 1"},
-		{
-			Rule:     "SI-CODE-002",
-			Severity: analyze.High,
-			Message:  "high 2 accepted",
-			Accepted: &policy.Acceptance{Reason: "approved"},
-		},
-		{Rule: "SI-POP-002", Severity: analyze.Medium, Message: "medium 1"},
-		{Rule: "SI-REC-001", Severity: analyze.Low, Message: "low 1"},
-		{Rule: "SI-INT-001", Severity: analyze.Block, Message: "block 1"},
+func TestApplyCodeAcceptanceWithoutInstalledFileUsesScannerHash(t *testing.T) {
+	acc := policy.Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Hash: "sha256:aaa", Reason: "ok"}
+	rep := codeReport("a.js", analyze.High)
+	rep.Results[0].Findings[0].FileHash = "sha256:aaa"
+	applyAcceptances(rep, polWith("vite", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted == nil {
+		t.Fatal("deep scan hash did not match")
 	}
-
-	counts := CountByStatus(findings)
-
-	if counts["high"]["unaccepted"] != 1 {
-		t.Errorf("high unaccepted count = %d, want 1", counts["high"]["unaccepted"])
+	rep = codeReport("a.js", analyze.High)
+	rep.Results[0].Findings[0].FileHash = "sha256:bbb"
+	var warn bytes.Buffer
+	applyAcceptances(rep, polWith("vite", acc), nil, &warn)
+	if rep.Results[0].Findings[0].Accepted != nil || !strings.Contains(warn.String(), "hash mismatch") {
+		t.Errorf("accepted %v, warning %q", rep.Results[0].Findings[0].Accepted, warn.String())
 	}
-	if counts["high"]["accepted"] != 1 {
-		t.Errorf("high accepted count = %d, want 1", counts["high"]["accepted"])
-	}
-	if counts["medium"]["unaccepted"] != 1 {
-		t.Errorf("medium unaccepted count = %d, want 1", counts["medium"]["unaccepted"])
-	}
-	if counts["low"]["unaccepted"] != 1 {
-		t.Errorf("low unaccepted count = %d, want 1", counts["low"]["unaccepted"])
-	}
-	if counts["block"]["unaccepted"] != 1 {
-		t.Errorf("block unaccepted count = %d, want 1", counts["block"]["unaccepted"])
+	rep = codeReport("a.js", analyze.High) // no hash at all: nothing to compare
+	applyAcceptances(rep, polWith("vite", acc), nil, &warn)
+	if rep.Results[0].Findings[0].Accepted != nil {
+		t.Error("accepted without any content to compare")
 	}
 }
 
-func TestFindingNotAcceptedWhenHashDiffers(t *testing.T) {
-	p := &policy.Policy{
-		File: policy.File{
-			AcceptFindings: map[string][]policy.Acceptance{
-				"vite": {
-					{
-						Version: "8.3.8",
-						Rule:    "SI-CODE-001",
-						File:    "dist/node/chunks/node.js",
-						Hash:    "sha256:abc123",
-						Reason:  "registry read only",
-					},
-				},
-			},
-		},
-	}
-
-	findings := []analyze.Finding{
-		{
-			Rule:     "SI-CODE-001",
-			Severity: analyze.High,
-			Message:  "test message",
-		},
-	}
-
-	// Apply with different hash
-	result := ApplyAcceptances(findings, p, "vite", "8.3.8", "dist/node/chunks/node.js", "sha256:xyz999")
-
-	if len(result) != 1 {
-		t.Errorf("ApplyAcceptances returned %d findings, want 1", len(result))
-	}
-
-	if result[0].Accepted != nil {
-		t.Errorf("Finding with different hash should not be accepted, but got %v", result[0].Accepted)
+func TestApplyExpiredAcceptanceSaysSo(t *testing.T) {
+	dir := pkgDirWith(t, map[string]string{"a.js": "x"})
+	hash, _ := sha256File(dir, "a.js")
+	acc := policy.Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Hash: hash, Reason: "ok", Expires: "2026-01-01"}
+	rep := codeReport("a.js", analyze.High)
+	warn := apply(rep, polWith("vite", acc), dir)
+	if rep.Results[0].Findings[0].Accepted != nil || !strings.Contains(warn, "expired on 2026-01-01") {
+		t.Errorf("accepted %v, warning %q", rep.Results[0].Findings[0].Accepted, warn)
 	}
 }
 
-func TestFindingNotAcceptedWhenVersionDiffers(t *testing.T) {
-	p := &policy.Policy{
-		File: policy.File{
-			AcceptFindings: map[string][]policy.Acceptance{
-				"vite": {
-					{
-						Version: "8.3.8",
-						Rule:    "SI-CODE-001",
-						File:    "dist/node/chunks/node.js",
-						Hash:    "sha256:abc123",
-						Reason:  "registry read only",
-					},
-				},
-			},
-		},
+func TestApplyNeverAcceptsBlockOrForbidden(t *testing.T) {
+	dir := pkgDirWith(t, map[string]string{"a.js": "x"})
+	hash, _ := sha256File(dir, "a.js")
+	acc := policy.Acceptance{Version: "8.3.8", Rule: "SI-CODE-001", File: "a.js", Hash: hash, Reason: "ok"}
+
+	rep := codeReport("a.js", analyze.Block)
+	warn := apply(rep, polWith("vite", acc), dir)
+	if rep.Results[0].Findings[0].Accepted != nil || rep.Results[0].Level != analyze.LevelBlock || !strings.Contains(warn, "cannot be accepted") {
+		t.Errorf("block finding accepted (%q)", warn)
 	}
 
-	findings := []analyze.Finding{
-		{
-			Rule:     "SI-CODE-001",
-			Severity: analyze.High,
-			Message:  "test message",
-		},
+	pol := polWith("vite", acc)
+	pol.DisallowAccept = []string{"SI-CODE-*"}
+	rep = codeReport("a.js", analyze.High)
+	warn = apply(rep, pol, dir)
+	if rep.Results[0].Findings[0].Accepted != nil || !strings.Contains(warn, "organization policy forbids") {
+		t.Errorf("forbidden rule accepted (%q)", warn)
 	}
+}
 
-	// Apply with different version
-	result := ApplyAcceptances(findings, p, "vite", "8.3.7", "dist/node/chunks/node.js", "sha256:abc123")
+func pkgReport(version, integrity, evidence string, rule string, sev analyze.Severity) *analyze.Report {
+	p := &lockfile.Package{ID: "tslib@" + version, Name: "tslib", Version: version, Integrity: integrity}
+	fs := []analyze.Finding{{Rule: rule, Severity: sev, Message: "published by someone", Evidence: evidence}}
+	res := analyze.Result{Package: p, Findings: fs}
+	res.Score, res.Level = analyze.Score(fs)
+	return &analyze.Report{Results: []analyze.Result{res}}
+}
 
-	if len(result) != 1 {
-		t.Errorf("ApplyAcceptances returned %d findings, want 1", len(result))
+func TestApplyPackageLevelAcceptance(t *testing.T) {
+	acc := policy.Acceptance{Version: "2.9.1", Rule: "SI-REC-002", Integrity: "sha512-a", Evidence: "publisher microsoft1es", Reason: "Microsoft"}
+	for _, tt := range []struct {
+		name, ver, integrity, evidence, warn string
+		accepted                             bool
+	}{
+		{"match", "2.9.1", "sha512-a", "publisher microsoft1es", "", true},
+		{"other integrity", "2.9.1", "sha512-b", "publisher microsoft1es", "integrity mismatch", false},
+		{"other evidence", "2.9.1", "sha512-a", "publisher someone-else", "evidence changed", false},
+		{"other version", "2.9.2", "sha512-a", "publisher microsoft1es", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rep := pkgReport(tt.ver, tt.integrity, tt.evidence, "SI-REC-002", analyze.High)
+			var warn bytes.Buffer
+			applyAcceptances(rep, polWith("tslib", acc), nil, &warn)
+			if got := rep.Results[0].Findings[0].Accepted != nil; got != tt.accepted {
+				t.Errorf("accepted = %v, want %v", got, tt.accepted)
+			}
+			if !strings.Contains(warn.String(), tt.warn) || (tt.warn == "" && warn.Len() > 0) {
+				t.Errorf("warning = %q, want %q", warn.String(), tt.warn)
+			}
+		})
 	}
+}
 
-	if result[0].Accepted != nil {
-		t.Errorf("Finding with different version should not be accepted, but got %v", result[0].Accepted)
+func TestApplyPackageLevelUsesRegistryIntegrityWhenLockfileHasNone(t *testing.T) {
+	acc := policy.Acceptance{Version: "2.9.1", Rule: "SI-REC-002", Integrity: "sha512-reg", Evidence: "e", Reason: "r"}
+	rep := pkgReport("2.9.1", "", "e", "SI-REC-002", analyze.High)
+	applyAcceptances(rep, polWith("tslib", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted != nil {
+		t.Fatal("accepted with nothing to pin to")
+	}
+	rep = pkgReport("2.9.1", "", "e", "SI-REC-002", analyze.High)
+	rep.Results[0].RegistryIntegrity = "sha512-reg"
+	applyAcceptances(rep, polWith("tslib", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted == nil {
+		t.Fatal("registry integrity not used")
+	}
+}
+
+func TestApplyNeverAcceptsMalwareOrHighVulns(t *testing.T) {
+	acc := policy.Acceptance{Version: "2.9.1", Rule: "SI-VUL-001", Integrity: "sha512-a", Evidence: "MAL-1", Reason: "r"}
+	rep := pkgReport("2.9.1", "sha512-a", "MAL-1", "SI-VUL-001", analyze.Block)
+	applyAcceptances(rep, polWith("tslib", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted != nil || rep.Results[0].Level != analyze.LevelBlock {
+		t.Error("malware advisory accepted")
+	}
+	// A recorded entry passed `accept --force`, so a high vulnerability
+	// applies, and its malware sibling still does not even with force.
+	rep = pkgReport("2.9.1", "sha512-a", "GHSA-1", "SI-VUL-001", analyze.High)
+	acc.Evidence = "GHSA-1"
+	applyAcceptances(rep, polWith("tslib", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted == nil || rep.Results[0].Level != analyze.LevelNone {
+		t.Error("a high-severity vulnerability with a recorded (forced) acceptance was not applied")
+	}
+	acc.Evidence = "MAL-1"
+	for _, f := range []analyze.Finding{{Rule: "SI-VUL-001", Severity: analyze.Block}, {Rule: "SI-INT-001", Severity: analyze.Block}} {
+		if ok, _ := analyze.Acceptable(f, true); ok {
+			t.Errorf("%s at block is acceptable even with force", f.Rule)
+		}
+	}
+	rep = pkgReport("2.9.1", "sha512-a", "MAL-1", "SI-VUL-001", analyze.Medium)
+	applyAcceptances(rep, polWith("tslib", acc), nil, nil)
+	if rep.Results[0].Findings[0].Accepted == nil {
+		t.Error("a medium vulnerability could not be accepted")
+	}
+}
+
+func TestSeveralEvidencesOfOneRule(t *testing.T) {
+	a1 := policy.Acceptance{Version: "2.9.1", Rule: "SI-REC-002", Integrity: "sha512-a", Evidence: "publisher x", Reason: "r"}
+	a2 := policy.Acceptance{Version: "2.9.1", Rule: "SI-REC-002", Integrity: "sha512-a", Evidence: "maintainers added: y", Reason: "r"}
+	p := &lockfile.Package{ID: "tslib@2.9.1", Name: "tslib", Version: "2.9.1", Integrity: "sha512-a"}
+	fs := []analyze.Finding{
+		{Rule: "SI-REC-002", Severity: analyze.High, Evidence: "publisher x"},
+		{Rule: "SI-REC-002", Severity: analyze.Low, Evidence: "maintainers added: y"},
+	}
+	rep := &analyze.Report{Results: []analyze.Result{{Package: p, Findings: fs}}}
+	applyAcceptances(rep, polWith("tslib", a1, a2), nil, nil)
+	if fs[0].Accepted == nil || fs[1].Accepted == nil || rep.Worst() != analyze.LevelNone {
+		t.Errorf("findings = %+v, worst %v", fs, rep.Worst())
+	}
+}
+
+func TestStaleAcceptances(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, policy.FileName)
+	for _, v := range []string{"1.0.0", "1.1.0"} {
+		if err := policy.AcceptFinding(path, "vite", policy.Acceptance{Version: v, Rule: "SI-CODE-001", File: "a.js", Reason: "r"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pol := &policy.Policy{ProjectPath: path}
+	got := staleAcceptances(pol, func(pkg, ver string) bool { return ver == "1.1.0" })
+	if len(got) != 1 || got[0] != "vite@1.0.0" {
+		t.Errorf("stale = %v", got)
 	}
 }

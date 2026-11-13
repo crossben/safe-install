@@ -16,12 +16,16 @@ This project installs its dependencies through safe-install (https://github.com/
 Approving an install script, a Python source build or a Composer plugin lets that package run code on this machine. Only the human decides that. You must never:
 
 - run `safe-install approve`, or use `--force` or `--yes`;
-- run `safe-install accept` to mark code findings as reviewed and safe;
+- run `safe-install accept` (it marks findings as reviewed and safe; it needs a terminal and a confirmation, but that is only a speed bump: this rule is the protection);
 - edit `allowScripts` or `acceptFindings` in `.safe-install.json` or the user config, or `allow-plugins` in `composer.json`;
 - lower `minReleaseAge` / `--min-age`, or add `blockPackages` exceptions;
 - re-run the install with npm, pnpm, yarn, bun, uv, pip or composer directly to get scripts, builds or plugins to run.
 
 When you run without a terminal, safe-install approves nothing new. It installs the packages, skips scripts (and Python builds, Composer plugins) that are not approved yet, and lists each skipped package with its findings. A Python install stops if a package must be built from source and is not approved. Stop and tell the human: the package name, its scripts, its risk level and findings, and the command for them to run themselves: `safe-install approve <package>`. Some packages (esbuild, sharp, native modules) may not work until their scripts run.
+
+## When a finding blocks you
+
+Never accept it yourself. Stop and tell the human the package, version, rule ID, and the finding's evidence (package-level) or file (code finding). Give the exact command for them to run themselves: `safe-install accept <pkg>@<version> <rule> [--file <path>] --reason "<why>"`. Leave the reason for the human to write: do not invent it as your own judgement that the finding is safe.
 
 ## Checking dependencies
 

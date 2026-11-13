@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,13 +19,14 @@ const FileName = ".safe-install.json"
 
 // File is the policy file format.
 type File struct {
-	MinReleaseAge        string                    `json:"minReleaseAge,omitempty"`        // e.g. "72h", "3d", "0"
-	MinReleaseAgeExclude []string                  `json:"minReleaseAgeExclude,omitempty"` // package name globs
-	FailOn               string                    `json:"failOn,omitempty"`               // check threshold
-	AllowScripts         map[string]Approval       `json:"allowScripts,omitempty"`         // by package name
-	AcceptFindings       map[string][]Acceptance   `json:"acceptFindings,omitempty"`       // by package name
-	BlockPackages        []string                  `json:"blockPackages,omitempty"`        // name globs never installed or run
-	OrgPolicy            string                    `json:"orgPolicy,omitempty"`            // organization policy: path or https URL
+	MinReleaseAge        string                  `json:"minReleaseAge,omitempty"`        // e.g. "72h", "3d", "0"
+	MinReleaseAgeExclude []string                `json:"minReleaseAgeExclude,omitempty"` // package name globs
+	FailOn               string                  `json:"failOn,omitempty"`               // check threshold
+	AllowScripts         map[string]Approval     `json:"allowScripts,omitempty"`         // by package name
+	AcceptFindings       map[string][]Acceptance `json:"acceptFindings,omitempty"`       // by package name
+	BlockPackages        []string                `json:"blockPackages,omitempty"`        // name globs never installed or run
+	DisallowAccept       []string                `json:"disallowAccept,omitempty"`       // rule ID globs that may not be accepted ("*" forbids all); organization policy
+	OrgPolicy            string                  `json:"orgPolicy,omitempty"`            // organization policy: path or https URL
 }
 
 // Trust modes for an approval.
@@ -80,16 +82,24 @@ func (a Approval) validate(name string) error {
 	return nil
 }
 
-// Acceptance records a code finding that has been reviewed and judged harmless.
+// Acceptance records a finding that has been reviewed and judged harmless.
+//
+// A code-level acceptance (SI-CODE-*, SI-PTH-001) names a File
+// and the Hash of that file's content in the installed package. A
+// package-level one (registry metadata rules) has no File: it is pinned to
+// the Integrity of the exact tarball and to the Evidence the finding reported
+// when it was reviewed.
 type Acceptance struct {
-	Version string `json:"version,omitempty"`    // version reviewed
-	Rule    string `json:"rule"`                 // SI-CODE-001, etc; required
-	File    string `json:"file"`                 // relative path in package
-	Hash    string `json:"hash"`                 // sha256:<hash> of file content
-	Reason  string `json:"reason"`               // required: why it's safe
-	By      string `json:"by,omitempty"`         // who accepted it
-	At      string `json:"at,omitempty"`         // date accepted (YYYY-MM-DD)
-	Expires string `json:"expires,omitempty"`    // last valid day (YYYY-MM-DD)
+	Version   string `json:"version,omitempty"`   // version reviewed
+	Rule      string `json:"rule"`                // SI-CODE-001, SI-REC-002, ...; required
+	File      string `json:"file,omitempty"`      // path relative to the package (code findings)
+	Hash      string `json:"hash,omitempty"`      // sha256:<hex> of that file's content (code findings)
+	Integrity string `json:"integrity,omitempty"` // tarball integrity (package-level findings)
+	Evidence  string `json:"evidence,omitempty"`  // what the finding reported (package-level findings)
+	Reason    string `json:"reason"`              // required: why it is safe
+	By        string `json:"by,omitempty"`        // who accepted it
+	At        string `json:"at,omitempty"`        // date accepted (YYYY-MM-DD)
+	Expires   string `json:"expires,omitempty"`   // last valid day (YYYY-MM-DD)
 }
 
 // Expired reports whether the acceptance's last valid day is before now.
@@ -104,20 +114,61 @@ func (a Acceptance) Expired(now time.Time) bool {
 	return now.UTC().After(last.Add(24*time.Hour - time.Nanosecond))
 }
 
-// Validate checks that required fields are present and properly formatted.
-func (a Acceptance) Validate() error {
+// resolveExpiry turns an expiry given as a date (YYYY-MM-DD) or a duration
+// ("90d", "12h") into a date.
+func resolveExpiry(s string, now time.Time) (string, error) {
+	if s == "" {
+		return "", nil
+	}
+	if _, err := time.Parse("2006-01-02", s); err == nil {
+		return s, nil
+	}
+	d, err := parseDuration(s)
+	if err != nil {
+		return "", fmt.Errorf("invalid expires %q (use a duration like 90d or a date YYYY-MM-DD)", s)
+	}
+	return now.UTC().Add(d).Format("2006-01-02"), nil
+}
+
+// Validate checks the required fields and converts a duration Expires
+// ("90d") into a date. It has a pointer receiver so the conversion is kept.
+func (a *Acceptance) Validate() error {
 	if a.Rule == "" {
 		return fmt.Errorf("rule required")
 	}
 	if a.Reason == "" {
 		return fmt.Errorf("reason required")
 	}
-	if a.Expires != "" {
-		if _, err := time.Parse("2006-01-02", a.Expires); err != nil {
-			return fmt.Errorf("invalid expires format: %w", err)
-		}
+	exp, err := resolveExpiry(a.Expires, time.Now())
+	if err != nil {
+		return err
 	}
+	a.Expires = exp
 	return nil
+}
+
+// parseDuration parses a duration string like "90d", "1h", "24h" etc.
+func parseDuration(s string) (time.Duration, error) {
+	// Check for "d" suffix (days)
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		if n < 0 {
+			return 0, fmt.Errorf("duration must be non-negative: %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	// Check for Go duration format (e.g., "90d" already handled, but also "24h", "1h")
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse duration %q: %w", s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("duration must be non-negative: %q", s)
+	}
+	return d, nil
 }
 
 // Lookup finds the approval for a package: its exact name first, then the
@@ -137,18 +188,40 @@ func (p *Policy) Lookup(name string) (a Approval, key string, ok bool) {
 	return a, key, ok
 }
 
-// LookupAcceptance finds an acceptance matching package, version, rule, file, and hash exactly.
-func (p *Policy) LookupAcceptance(pkg, ver, rule, file, hash string) (Acceptance, bool) {
-	accs, ok := p.AcceptFindings[pkg]
-	if !ok {
-		return Acceptance{}, false
-	}
-	for _, acc := range accs {
-		if acc.Version == ver && acc.Rule == rule && acc.File == file && acc.Hash == hash {
-			return acc, true
+// FindAcceptances returns every recorded acceptance for the key (package,
+// version, rule, file). A package-level key (file "") can hold several, one
+// per piece of evidence.
+func (p *Policy) FindAcceptances(pkg, ver, rule, file string) []Acceptance {
+	var out []Acceptance
+	for _, acc := range p.AcceptFindings[pkg] {
+		if acc.Version == ver && acc.Rule == rule && acc.File == file {
+			out = append(out, acc)
 		}
 	}
+	return out
+}
+
+// FindAcceptance returns the recorded entry for the key, or false. The
+// caller compares hash, integrity, evidence and expiry.
+func (p *Policy) FindAcceptance(pkg, ver, rule, file string) (Acceptance, bool) {
+	if accs := p.FindAcceptances(pkg, ver, rule, file); len(accs) > 0 {
+		return accs[0], true
+	}
 	return Acceptance{}, false
+}
+
+// AcceptForbidden reports whether the organization forbids accepting
+// findings of this rule (a disallowAccept glob matches).
+func (p *Policy) AcceptForbidden(rule string) bool {
+	for _, g := range p.DisallowAccept {
+		if g == "*" {
+			return true
+		}
+		if ok, _ := path.Match(g, rule); ok || g == rule {
+			return true
+		}
+	}
+	return false
 }
 
 // Policy is the effective policy: the organization policy, overlaid by the
@@ -223,6 +296,8 @@ func (p *Policy) overlay(f *File) {
 	}
 	p.MinReleaseAgeExclude = append(p.MinReleaseAgeExclude, f.MinReleaseAgeExclude...)
 	p.blocks = append(p.blocks, f.BlockPackages...)
+	// Only ever added to: a project cannot lift what the organization forbids.
+	p.DisallowAccept = append(p.DisallowAccept, f.DisallowAccept...)
 	for name, a := range f.AllowScripts {
 		p.AllowScripts[name] = a
 	}
@@ -285,54 +360,79 @@ func Revoke(path, name string) (bool, error) {
 	return removed, err
 }
 
-// AcceptFinding records an acceptance in the policy file at path, creating it if needed.
-func AcceptFinding(path, pkg, ver, rule, file, hash, reason, expiry string) error {
-	a := Acceptance{
-		Version: ver,
-		Rule:    rule,
-		File:    file,
-		Hash:    hash,
-		Reason:  reason,
-		Expires: expiry,
-	}
+// AcceptFinding records an acceptance in the policy file at path, creating
+// it if needed. a.Expires may be a duration ("90d"); it is stored as a date.
+// An existing entry with the same version, rule and file (and, for a
+// package-level entry, the same evidence) is replaced.
+func AcceptFinding(path, pkg string, a Acceptance) error {
 	if err := a.Validate(); err != nil {
 		return err
 	}
+	if a.At == "" {
+		a.At = time.Now().UTC().Format("2006-01-02")
+	}
 	return update(path, func(f *File) bool {
-		if a.At == "" {
-			a.At = time.Now().UTC().Format("2006-01-02")
-		}
-		if a.By == "" {
-			a.By = os.Getenv("USER")
-			if a.By == "" {
-				a.By = "unknown"
+		accs := f.AcceptFindings[pkg]
+		for i, e := range accs {
+			if e.Version == a.Version && e.Rule == a.Rule && e.File == a.File && (a.File != "" || e.Evidence == a.Evidence) {
+				accs[i] = a
+				return true
 			}
 		}
-		f.AcceptFindings[pkg] = append(f.AcceptFindings[pkg], a)
+		f.AcceptFindings[pkg] = append(accs, a)
 		return true
 	})
 }
 
-// RevokeFinding removes a finding acceptance; it reports whether there was one.
+// RevokeFinding removes the acceptances for package, version, rule and file
+// (every evidence for a package-level one); it reports whether there was one.
 func RevokeFinding(path, pkg, ver, rule, file string) (bool, error) {
 	removed := false
 	err := update(path, func(f *File) bool {
-		if accs, ok := f.AcceptFindings[pkg]; ok {
-			for i, acc := range accs {
-				if acc.Rule == rule && acc.File == file {
-					// Remove this acceptance
-					f.AcceptFindings[pkg] = append(accs[:i], accs[i+1:]...)
-					if len(f.AcceptFindings[pkg]) == 0 {
-						delete(f.AcceptFindings, pkg)
-					}
-					removed = true
-					return true
-				}
+		var kept []Acceptance
+		for _, acc := range f.AcceptFindings[pkg] {
+			if acc.Version == ver && acc.Rule == rule && acc.File == file {
+				removed = true
+				continue
 			}
+			kept = append(kept, acc)
 		}
-		return false
+		if !removed {
+			return false
+		}
+		if len(kept) == 0 {
+			delete(f.AcceptFindings, pkg)
+		} else {
+			f.AcceptFindings[pkg] = kept
+		}
+		return true
 	})
 	return removed, err
+}
+
+// PruneStale removes the acceptances whose package version is no longer
+// present (per the lockfile); it reports how many it removed.
+func PruneStale(path string, present func(pkg, ver string) bool) (int, error) {
+	pruned := 0
+	err := update(path, func(f *File) bool {
+		for pkg, accs := range f.AcceptFindings {
+			var kept []Acceptance
+			for _, acc := range accs {
+				if present(pkg, acc.Version) {
+					kept = append(kept, acc)
+				} else {
+					pruned++
+				}
+			}
+			if len(kept) == 0 {
+				delete(f.AcceptFindings, pkg)
+			} else {
+				f.AcceptFindings[pkg] = kept
+			}
+		}
+		return pruned > 0
+	})
+	return pruned, err
 }
 
 // PruneAcceptances removes all expired acceptances from a policy file.

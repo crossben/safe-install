@@ -3,10 +3,12 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/crossben/safe-install/internal/analyze"
 	"github.com/crossben/safe-install/internal/lockfile"
+	"github.com/crossben/safe-install/internal/policy"
 )
 
 const lock = `{
@@ -122,5 +124,81 @@ func TestFindLineOtherLockfiles(t *testing.T) {
 		if got := findLine([]byte(c.data), c.name, c.version); got != c.want {
 			t.Errorf("%s@%s: line %d, want %d", c.name, c.version, got, c.want)
 		}
+	}
+}
+
+func acceptedReport() *analyze.Report {
+	acc := &policy.Acceptance{Reason: "Microsoft", By: "ben", Expires: "2999-01-01"}
+	mk := func(id string, fs ...analyze.Finding) analyze.Result {
+		name, ver, _ := strings.Cut(id, "@")
+		res := analyze.Result{Package: &lockfile.Package{ID: id, Name: name, Version: ver}, Findings: fs}
+		res.Score, res.Level = analyze.Score(fs)
+		return res
+	}
+	return &analyze.Report{Format: lockfile.NPMv3, Results: []analyze.Result{
+		// Two accepted highs in one package: counted as findings, never subtracted from packages.
+		mk("a@1.0.0",
+			analyze.Finding{Rule: "SI-CODE-001", Severity: analyze.High, Message: "x.js bad", File: "x.js", Accepted: acc},
+			analyze.Finding{Rule: "SI-CODE-002", Severity: analyze.High, Message: "y.js bad", File: "y.js", Accepted: acc}),
+		mk("b@1.0.0", analyze.Finding{Rule: "SI-REC-002", Severity: analyze.High, Message: "m"}),
+		mk("c@1.0.0"),
+	}}
+}
+
+func TestTextAcceptedAndSummary(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Text(&buf, acceptedReport(), "package-lock.json"); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"ACCEPTED (Microsoft, by ben, until 2999-01-01)", "0 block, 1 high (2 accepted), 0 medium, 0 low, 2 clean"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMarkdownAcceptedSection(t *testing.T) {
+	var buf bytes.Buffer
+	if err := Markdown(&buf, acceptedReport(), "package-lock.json"); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"<details>", "2 accepted finding(s)", "`a@1.0.0` `SI-CODE-001` `x.js`", "`Microsoft, by ben, until 2999-01-01`", "1 high (2 accepted)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "| HIGH | `a@1.0.0`") {
+		t.Errorf("fully accepted package listed as risky:\n%s", out)
+	}
+}
+
+func TestJSONAndSARIFAccepted(t *testing.T) {
+	var buf bytes.Buffer
+	if err := JSON(&buf, acceptedReport(), "package-lock.json"); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, `"accepted": {`) || !strings.Contains(out, `"file": "x.js"`) || !strings.Contains(out, `"worst": "high"`) {
+		t.Errorf("json:\n%s", out)
+	}
+	buf.Reset()
+	if err := SARIF(&buf, acceptedReport(), "package-lock.json", []byte("{}"), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); strings.Count(out, `"kind": "external"`) != 2 || !strings.Contains(out, `"justification": "Microsoft"`) {
+		t.Errorf("sarif:\n%s", out)
+	}
+}
+
+func TestAcceptedNoteNeutralisesControlCharacters(t *testing.T) {
+	note := AcceptedNote(&policy.Acceptance{Reason: "ok\nfake line \x1b[31mred", By: "me\r\x9b", Expires: "2999\x00"})
+	for _, r := range note {
+		if r < 0x20 || (r >= 0x7f && r < 0xa0) {
+			t.Fatalf("control character %q left in %q", r, note)
+		}
+	}
+	if !strings.Contains(note, "ok fake line") || !strings.Contains(note, "[31mred") {
+		t.Errorf("note %q", note)
 	}
 }

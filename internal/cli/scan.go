@@ -20,6 +20,7 @@ import (
 
 func newScanCmd(g *globalFlags) *cobra.Command {
 	var failOn string
+	var prune bool
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Scan the code of installed packages for malicious patterns",
@@ -32,14 +33,15 @@ func newScanCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runScan(cmd, g, threshold)
+			return runScan(cmd, g, threshold, prune)
 		},
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "high", "exit 1 when a package reaches this level: low, medium, high, block, none")
+	cmd.Flags().BoolVar(&prune, "prune-accepted", false, "remove acceptFindings entries that are expired or whose package version is no longer in the lockfile")
 	return cmd
 }
 
-func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
+func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level, prune bool) error {
 	dir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -82,6 +84,11 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	// Only packages unpacked on disk were scanned; the rest (other platforms'
 	// optional binaries, Plug'n'Play zips) are counted as skipped.
 	rep := &analyze.Report{Format: graph.Format, SkippedWhy: "not installed on this machine"}
+	if prune {
+		if err := pruneAccepted(cmd.ErrOrStderr(), filepath.Join(dir, policy.FileName), graph); err != nil {
+			return err
+		}
+	}
 	pol, err := policy.Load(dir)
 	if err != nil {
 		return err
@@ -92,10 +99,12 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 			continue
 		}
 		res := analyze.Result{Package: p, Findings: code[p.ID]}
-		// Apply acceptances to findings (package+version level for now)
-		res.Findings = ApplyAcceptances(res.Findings, pol, p.Name, p.Version, "", "")
 		res.Score, res.Level = analyze.Score(res.Findings)
 		rep.Results = append(rep.Results, res)
+	}
+	applyAcceptances(rep, pol, func(id string) string { return installed[id] }, cmd.ErrOrStderr())
+	if !prune {
+		warnStale(cmd.ErrOrStderr(), pol, graph)
 	}
 
 	source := filepath.Base(path)
@@ -119,10 +128,28 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level) error {
 	if err != nil {
 		return err
 	}
-	// Check fail-on threshold against unaccepted findings only
-	if failOn != analyze.LevelNone && WorstUnacceptedLevel(rep.Results) >= failOn {
-		worst := WorstUnacceptedLevel(rep.Results)
+	// Accepted findings no longer count toward a package's level.
+	if worst := rep.Worst(); failOn != analyze.LevelNone && worst >= failOn {
 		return &exitError{ExitPolicyFailure, errors.New("found " + worst.String() + "-risk code (--fail-on " + failOn.String() + ")")}
 	}
+	return nil
+}
+
+// pruneAccepted removes acceptFindings entries from the project file that
+// are expired or whose package version is not in the lockfile.
+func pruneAccepted(w io.Writer, path string, graph *lockfile.Graph) error {
+	if _, err := os.Stat(path); err != nil {
+		fmt.Fprintf(w, "safe-install: no %s here: nothing to prune\n", policy.FileName)
+		return nil
+	}
+	stale, err := policy.PruneStale(path, lockfilePresent(graph))
+	if err != nil {
+		return err
+	}
+	expired, err := policy.PruneAcceptances(path)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "safe-install: removed %d stale and %d expired acceptance(s) from %s\n", stale, expired, policy.FileName)
 	return nil
 }

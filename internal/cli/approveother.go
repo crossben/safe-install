@@ -178,7 +178,7 @@ func scriptsOther(cmd *cobra.Command, g *globalFlags, dir string, e ecosystem.Ec
 			Level: res.Level.String(), State: state, Findings: []jsonFinding{},
 		}
 		for _, f := range res.Findings {
-			item.Findings = append(item.Findings, jsonFinding{Rule: f.Rule, Severity: f.Severity.String(), Message: f.Message, Accepted: f.Accepted})
+			item.Findings = append(item.Findings, jsonFinding{Rule: f.Rule, Severity: f.Severity.String(), Message: f.Message, File: f.File, Evidence: f.Evidence, Accepted: f.Accepted})
 		}
 		items = append(items, item)
 	}

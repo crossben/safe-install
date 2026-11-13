@@ -10,6 +10,8 @@ package codescan
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +27,7 @@ import (
 
 // Version identifies the rule set; cached results from another version are
 // rescanned.
-const Version = 1
+const Version = 2
 
 const (
 	maxFileBytes    = 2 << 20  // larger files (bundles) are skipped
@@ -164,15 +166,19 @@ func isCode(name string) bool {
 	return false
 }
 
-// collector groups hits into one finding per rule, naming the first file.
+// collector keeps one finding per rule and file: an acceptance covers one
+// file, so a second file with the same hit must stay visible.
 type collector struct {
-	byRule map[string]*agg
-	total  int64
+	hits  []fileHit
+	total int64
 }
 
-type agg struct {
-	sev   analyze.Severity
-	files map[string]string // file -> what it does
+type fileHit struct {
+	rule string
+	sev  analyze.Severity
+	file string
+	what string
+	hash string // sha256 of the file's content
 }
 
 // add scans one file; it reports false once the package's byte budget is spent.
@@ -180,39 +186,40 @@ func (c *collector) add(name string, data []byte) bool {
 	if c.total += int64(len(data)); c.total > maxPackageBytes {
 		return false
 	}
-	for _, h := range scanFile(string(data)) {
-		a := c.byRule[h.rule]
-		if a == nil {
-			a = &agg{sev: h.sev, files: map[string]string{}}
-			c.byRule[h.rule] = a
-		}
-		a.files[name] = h.what
-	}
+	c.record(name, data, scanFile(string(data)))
 	return true
 }
 
-func (c *collector) findings() []analyze.Finding {
-	var out []analyze.Finding
-	for rule, a := range c.byRule {
-		files := make([]string, 0, len(a.files))
-		for f := range a.files {
-			files = append(files, f)
-		}
-		sort.Strings(files)
-		msg := fmt.Sprintf("%s %s", files[0], a.files[files[0]])
-		if n := len(files) - 1; n > 0 {
-			msg += fmt.Sprintf(" (and %d more file(s))", n)
-		}
-		out = append(out, analyze.Finding{Rule: rule, Severity: a.sev, Message: msg})
+// record adds the hits one file triggered.
+func (c *collector) record(name string, data []byte, hits []hit) {
+	if len(hits) == 0 {
+		return
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Rule < out[j].Rule })
+	sum := sha256.Sum256(data)
+	hash := "sha256:" + hex.EncodeToString(sum[:])
+	for _, h := range hits {
+		c.hits = append(c.hits, fileHit{h.rule, h.sev, name, h.what, hash})
+	}
+}
+
+func (c *collector) findings() []analyze.Finding {
+	out := make([]analyze.Finding, 0, len(c.hits))
+	for _, h := range c.hits {
+		out = append(out, analyze.Finding{Rule: h.rule, Severity: h.sev, Message: h.file + " " + h.what, File: h.file, FileHash: h.hash})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Rule != out[j].Rule {
+			return out[i].Rule < out[j].Rule
+		}
+		return out[i].File < out[j].File
+	})
 	return out
 }
 
 // Package scans the JavaScript files of the package installed in dir (not
 // its nested node_modules) and returns one finding per rule triggered.
 func Package(dir string) []analyze.Finding {
-	c := &collector{byRule: map[string]*agg{}}
+	c := &collector{}
 	// Every read goes through os.Root: nothing outside dir can be opened,
 	// whatever symlinks the package ships.
 	root, err := os.OpenRoot(dir)
@@ -264,7 +271,7 @@ func Tarball(r io.Reader) ([]analyze.Finding, error) {
 	}
 	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
-	c := &collector{byRule: map[string]*agg{}}
+	c := &collector{}
 	for n := 0; n < maxTarEntries; n++ {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {

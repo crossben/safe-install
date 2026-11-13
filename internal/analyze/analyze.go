@@ -14,6 +14,7 @@ import (
 	"github.com/crossben/safe-install/internal/ecosystem"
 	"github.com/crossben/safe-install/internal/lockfile"
 	"github.com/crossben/safe-install/internal/osv"
+	"github.com/crossben/safe-install/internal/policy"
 	"github.com/crossben/safe-install/internal/popularity"
 	"github.com/crossben/safe-install/internal/registry"
 )
@@ -71,10 +72,23 @@ func ParseLevel(s string) (Level, error) {
 
 // Finding is one rule hit with its evidence.
 type Finding struct {
-	Rule     string                 `json:"rule"`
-	Severity Severity               `json:"-"`
-	Message  string                 `json:"message"`
-	Accepted interface{}            `json:"accepted,omitempty"` // *policy.Acceptance, nil if not accepted
+	Rule     string   `json:"rule"`
+	Severity Severity `json:"-"`
+	Message  string   `json:"message"`
+	// File is the package-relative path (forward slashes) of the code that
+	// triggered a code finding (SI-CODE-*, SI-BLD-002, SI-PTH-001); "" for
+	// package-level findings.
+	File string `json:"file,omitempty"`
+	// FileHash is the sha256 ("sha256:<hex>") of File's content as the scanner
+	// read it. check --deep matches acceptances with it, since no installed
+	// file exists to hash. Not part of the JSON output.
+	FileHash string `json:"-"`
+	// Evidence is a short, stable description of what a package-level rule
+	// saw (a publisher, added maintainers). An acceptance is pinned to it.
+	// It is not the human message.
+	Evidence string `json:"evidence,omitempty"`
+	// Accepted is the recorded acceptance that applies, nil if none.
+	Accepted *policy.Acceptance `json:"accepted,omitempty"`
 }
 
 // Result is the verdict for one package.
@@ -374,10 +388,15 @@ func check(in *Input) Result {
 // and derives the level: block if any finding blocks, else by score. Several
 // findings of one rule (three advisories, two script stages) count once:
 // they are one kind of evidence; different rules add up.
+//
+// Accepted findings (a reviewed, recorded acceptance) are left out.
 func Score(findings []Finding) (int, Level) {
 	worst := map[string]Severity{}
 	level := LevelNone
 	for _, f := range findings {
+		if f.Accepted != nil {
+			continue
+		}
 		worst[f.Rule] = max(worst[f.Rule], f.Severity)
 		if f.Severity == Block {
 			level = LevelBlock
@@ -414,4 +433,23 @@ func fromRegistry(p *lockfile.Package) bool {
 	}
 	r := p.Resolved
 	return r == "" || strings.HasPrefix(r, "https://") || strings.HasPrefix(r, "http://")
+}
+
+// Acceptable reports whether a finding may be accepted after review. Block
+// findings (including known-malware advisories) never can; OSV
+// vulnerabilities above medium only with force.
+func Acceptable(f Finding, force bool) (ok bool, why string) {
+	switch {
+	case strings.HasPrefix(f.Rule, "SI-SCR-") || strings.HasPrefix(f.Rule, "SI-POL-"):
+		return false, "install-script and policy findings cannot be accepted; use `safe-install approve` or allowScripts for install scripts"
+	case f.Rule == "SI-BLD-002":
+		return false, "build-code findings cannot be accepted: `accept` does not scan source distributions; use `safe-install approve` to allow the build"
+	case f.Rule == "SI-VUL-001" && f.Severity == Block:
+		return false, "known-malware advisories cannot be accepted"
+	case f.Severity == Block:
+		return false, "block findings cannot be accepted"
+	case f.Rule == "SI-VUL-001" && f.Severity > Medium && !force:
+		return false, "a high-severity vulnerability can only be accepted with --force"
+	}
+	return true, ""
 }
