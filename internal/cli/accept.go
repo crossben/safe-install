@@ -108,7 +108,7 @@ func runAccept(cmd *cobra.Command, g *globalFlags, spec, rule string, f acceptFl
 		if !ok {
 			return fmt.Errorf("no acceptance for %s@%s %s%s in %s", name, version, rule, fileSuffix(f.file), target)
 		}
-		fmt.Fprintf(out, "Revoked %s@%s %s%s in %s\nCommit %s so the team sees it.\n", name, version, rule, fileSuffix(f.file), target, policy.FileName)
+		_, _ = fmt.Fprintf(out, "Revoked %s@%s %s%s in %s\nCommit %s so the team sees it.\n", name, version, rule, fileSuffix(f.file), target, policy.FileName)
 		return nil
 	}
 
@@ -148,7 +148,7 @@ func runAccept(cmd *cobra.Command, g *globalFlags, spec, rule string, f acceptFl
 
 	var entries []policy.Acceptance
 	if f.file != "" {
-		entries, err = codeAcceptances(cmd, dir, eco, pkg, rule, f, pol)
+		entries, err = codeAcceptances(cmd, dir, eco, pkg, rule, f)
 	} else {
 		entries, err = packageAcceptances(cmd, g, dir, eco, pkg, rule, f, pol)
 	}
@@ -157,13 +157,13 @@ func runAccept(cmd *cobra.Command, g *globalFlags, spec, rule string, f acceptFl
 	}
 
 	by := acceptor()
-	fmt.Fprintf(out, "\nReason:  %s\n", f.reason)
+	_, _ = fmt.Fprintf(out, "\nReason:  %s\n", f.reason)
 	if f.expires != "" {
-		fmt.Fprintf(out, "Expires: %s\n", f.expires)
+		_, _ = fmt.Fprintf(out, "Expires: %s\n", f.expires)
 	}
-	fmt.Fprintf(out, "Accept? [y/N] ")
+	_, _ = fmt.Fprintf(out, "Accept? [y/N] ")
 	if !confirmed(cmd.InOrStdin()) {
-		fmt.Fprintln(out, "\nNot accepted; nothing was written.")
+		_, _ = fmt.Fprintln(out, "\nNot accepted; nothing was written.")
 		return nil
 	}
 	for _, e := range entries {
@@ -172,9 +172,9 @@ func runAccept(cmd *cobra.Command, g *globalFlags, spec, rule string, f acceptFl
 			return err
 		}
 	}
-	fmt.Fprintf(out, "\nAccepted %s@%s %s%s (%d entr%s) in %s.\n", name, version, rule, fileSuffix(f.file), len(entries), plural(len(entries)), target)
+	_, _ = fmt.Fprintf(out, "\nAccepted %s@%s %s%s (%d entr%s) in %s.\n", name, version, rule, fileSuffix(f.file), len(entries), plural(len(entries)), target)
 	if !f.global {
-		fmt.Fprintf(out, "Commit %s so the team shares it.\n", policy.FileName)
+		_, _ = fmt.Fprintf(out, "Commit %s so the team shares it.\n", policy.FileName)
 	}
 	return nil
 }
@@ -222,7 +222,7 @@ func checkAcceptable(fs []analyze.Finding, force bool) error {
 
 // codeAcceptances re-scans the installed package and returns the entry for
 // the finding of rule in f.file, after showing the flagged lines.
-func codeAcceptances(cmd *cobra.Command, dir string, eco ecosystem.Ecosystem, pkg *lockfile.Package, rule string, f acceptFlags, pol *policy.Policy) ([]policy.Acceptance, error) {
+func codeAcceptances(cmd *cobra.Command, dir string, eco ecosystem.Ecosystem, pkg *lockfile.Package, rule string, f acceptFlags) ([]policy.Acceptance, error) {
 	pdir, found, ok := rescanPackage(dir, eco, pkg)
 	if !ok {
 		return nil, fmt.Errorf("%s is not installed here: install it first, so the code that runs can be reviewed", pkg.ID)
@@ -256,7 +256,7 @@ func codeAcceptances(cmd *cobra.Command, dir string, eco ecosystem.Ecosystem, pk
 	}
 	out := cmd.OutOrStdout()
 	for _, m := range matches {
-		fmt.Fprintf(out, "%s@%s  %s (%s)\n  %s\n  file: %s\n  hash: %s\n", pkg.Name, pkg.Version, m.Rule, m.Severity, m.Message, file, hash)
+		_, _ = fmt.Fprintf(out, "%s@%s  %s (%s)\n  %s\n  file: %s\n  hash: %s\n", pkg.Name, pkg.Version, m.Rule, m.Severity, m.Message, file, hash)
 	}
 	showLines(out, pdir, file, rule)
 	return []policy.Acceptance{{Version: pkg.Version, Rule: rule, File: file, Hash: hash}}, nil
@@ -305,7 +305,7 @@ func showLines(w io.Writer, pdir, file, rule string) {
 	src := string(data)
 	flagged := codescan.FlaggedLines(src, rule)
 	if len(flagged) == 0 {
-		fmt.Fprintln(w, "  (the flagged lines could not be located; review the whole file)")
+		_, _ = fmt.Fprintln(w, "  (the flagged lines could not be located; review the whole file)")
 		return
 	}
 	lines := strings.Split(src, "\n")
@@ -316,14 +316,14 @@ func showLines(w io.Writer, pdir, file, rule string) {
 		}
 	}
 	isFlagged := func(n int) bool { return slices.Contains(flagged, n) }
-	fmt.Fprintf(w, "\nFlagged lines in %s:\n", file)
+	_, _ = fmt.Fprintf(w, "\nFlagged lines in %s:\n", file)
 	prev := 0
 	for i := 1; i <= len(lines); i++ {
 		if !shown[i] {
 			continue
 		}
 		if prev != 0 && i != prev+1 {
-			fmt.Fprintln(w, "      ...")
+			_, _ = fmt.Fprintln(w, "      ...")
 		}
 		prev = i
 		mark := " "
@@ -334,7 +334,7 @@ func showLines(w io.Writer, pdir, file, rule string) {
 		if len(text) > 200 {
 			text = text[:200] + "..."
 		}
-		fmt.Fprintf(w, "%s %4d | %s\n", mark, i, text)
+		_, _ = fmt.Fprintf(w, "%s %4d | %s\n", mark, i, text)
 	}
 }
 
@@ -375,7 +375,7 @@ func packageAcceptances(cmd *cobra.Command, g *globalFlags, dir string, eco ecos
 	out := cmd.OutOrStdout()
 	var entries []policy.Acceptance
 	for _, m := range matches {
-		fmt.Fprintf(out, "%s@%s  %s (%s)\n  %s\n  evidence: %s\n  pinned to: %s\n", pkg.Name, pkg.Version, m.Rule, m.Severity, m.Message, m.Evidence, pin)
+		_, _ = fmt.Fprintf(out, "%s@%s  %s (%s)\n  %s\n  evidence: %s\n  pinned to: %s\n", pkg.Name, pkg.Version, m.Rule, m.Severity, m.Message, m.Evidence, pin)
 		entries = append(entries, policy.Acceptance{Version: pkg.Version, Rule: rule, Integrity: pin, Evidence: m.Evidence})
 	}
 	return entries, nil

@@ -247,7 +247,7 @@ func TestStaleAcceptances(t *testing.T) {
 		}
 	}
 	pol := &policy.Policy{ProjectPath: path}
-	got := staleAcceptances(pol, func(pkg, ver string) bool { return ver == "1.1.0" })
+	got := staleAcceptances(pol, func(_, ver string) bool { return ver == "1.1.0" })
 	if len(got) != 1 || got[0] != "vite@1.0.0" {
 		t.Errorf("stale = %v", got)
 	}

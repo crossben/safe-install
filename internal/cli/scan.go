@@ -139,7 +139,7 @@ func runScan(cmd *cobra.Command, g *globalFlags, failOn analyze.Level, prune boo
 // are expired or whose package version is not in the lockfile.
 func pruneAccepted(w io.Writer, path string, graph *lockfile.Graph) error {
 	if _, err := os.Stat(path); err != nil {
-		fmt.Fprintf(w, "safe-install: no %s here: nothing to prune\n", policy.FileName)
+		_, _ = fmt.Fprintf(w, "safe-install: no %s here: nothing to prune\n", policy.FileName)
 		return nil
 	}
 	stale, err := policy.PruneStale(path, lockfilePresent(graph))
@@ -150,6 +150,6 @@ func pruneAccepted(w io.Writer, path string, graph *lockfile.Graph) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "safe-install: removed %d stale and %d expired acceptance(s) from %s\n", stale, expired, policy.FileName)
+	_, _ = fmt.Fprintf(w, "safe-install: removed %d stale and %d expired acceptance(s) from %s\n", stale, expired, policy.FileName)
 	return nil
 }

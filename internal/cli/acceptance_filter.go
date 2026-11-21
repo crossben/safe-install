@@ -81,7 +81,7 @@ func applyAcceptances(rep *analyze.Report, pol *policy.Policy, pkgDir func(id st
 	warnOnce := func(line string) {
 		if warn != nil && !seen[line] {
 			seen[line] = true
-			fmt.Fprintln(warn, line)
+			_, _ = fmt.Fprintln(warn, line)
 		}
 	}
 	for i := range rep.Results {
@@ -209,7 +209,7 @@ func lockfilePresent(g *lockfile.Graph) func(pkg, ver string) bool {
 // version is not in the lockfile.
 func warnStale(w io.Writer, pol *policy.Policy, g *lockfile.Graph) {
 	if stale := staleAcceptances(pol, lockfilePresent(g)); len(stale) > 0 {
-		fmt.Fprintf(w, "safe-install: %s lists acceptFindings for %s, which are not in the lockfile; remove them with `safe-install scan --prune-accepted`\n",
+		_, _ = fmt.Fprintf(w, "safe-install: %s lists acceptFindings for %s, which are not in the lockfile; remove them with `safe-install scan --prune-accepted`\n",
 			filepath.Base(pol.ProjectPath), strings.Join(stale, ", "))
 	}
 }
