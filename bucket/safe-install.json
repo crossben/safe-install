@@ -1,19 +1,19 @@
 {
-    "version": "0.3.0",
+    "version": "0.4.0",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/crossben/safe-install/releases/download/v0.3.0/safe-install_windows_amd64.zip",
+            "url": "https://github.com/crossben/safe-install/releases/download/v0.4.0/safe-install_windows_amd64.zip",
             "bin": [
                 "safe-install.exe"
             ],
-            "hash": "e29525108da882da0553fd14e624adaf08543f96f0e5f426b80147e3106588da"
+            "hash": "4f64612701231ca518022a5abbe5308a28eb4d88ea28d8b5dbdb84ca94bec549"
         },
         "arm64": {
-            "url": "https://github.com/crossben/safe-install/releases/download/v0.3.0/safe-install_windows_arm64.zip",
+            "url": "https://github.com/crossben/safe-install/releases/download/v0.4.0/safe-install_windows_arm64.zip",
             "bin": [
                 "safe-install.exe"
             ],
-            "hash": "9ce11e188ee0d93b6406da7fcc38bf87a60ffc23138775cb50684f106b5a4e47"
+            "hash": "5ce888828ffdaaccc14de734bf834842144b3b46d7057951f9fa49038ffa7bca"
         }
     },
     "homepage": "https://github.com/crossben/safe-install",
